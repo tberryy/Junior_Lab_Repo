@@ -1,0 +1,46 @@
+﻿2026 Data Report
+Generated: 2026-07-07 17:06
+Source:    .\2026raw
+Output:    .\2026_organized
+========================================
+
+CRNs processed by day:
+
+monday: 3 crns
+  10446
+  10453
+  10457
+
+tuesday: 4 crns
+  10440
+  10449
+  10454
+  10456
+
+wensday: 3 crns
+  10442
+  10443
+  10447
+
+thrusday: 4 crns
+  10441
+  10448
+  10450
+  10452
+
+friday: 4 crns
+  10444
+  10445
+  10451
+  10458
+
+Total samples: 18
+
+Sample errors:
+  friday_10451 - tension: EXTRA 1 file(s) - check for duplicate runs (found 3, expected 2)
+  friday_10458 - tension: EXTRA 1 file(s) - check for duplicate runs (found 3, expected 2)
+  monday_10446 - tension: EXTRA 1 file(s) - check for duplicate runs (found 3, expected 2)
+  monday_10453 - tension: EXTRA 1 file(s) - check for duplicate runs (found 3, expected 2)
+  tuesday_10440 - tension: EXTRA 1 file(s) - check for duplicate runs (found 3, expected 2)
+  _unassigned - tension: UNASSIGNED - loose export folder does not belong to any sample folder
+  Batch1 - : UNRECOGNIZED folder name - could not parse day/sample id
