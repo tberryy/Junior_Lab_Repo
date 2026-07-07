@@ -1,0 +1,13 @@
+Results Table 1
+,Specimen label,Maximum Force,Maximum Stress,Comment
+,,(lbf),(ksi),
+"1","TESTSAMPLE1","0.01","0.00",""
+"2","","1.39","0.02",""
+"Mean","","0.70","0.01",""
+"Standard deviation","","0.98","0.01",""
+"Minimum","","0.01","0.00",""
+"Maximum","","1.39","0.02",""
+
+Results Table 2
+
+

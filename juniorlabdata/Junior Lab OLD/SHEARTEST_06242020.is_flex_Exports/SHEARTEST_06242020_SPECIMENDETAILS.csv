@@ -1,0 +1,17 @@
+Results Table 1
+,Specimen label,Maximum Force,Maximum Stress,Comment
+,,(lbf),(ksi),
+"1","SHEAR_7P5","4.12","0.01",""
+"2","SHEAR_6IN","5.19","0.01",""
+"3","SHEAR_9IN","3.64","0.01",""
+"4","SHEAR_8","3.84","0.01",""
+"5","SHEAR_5","5.07","0.01",""
+"6","SHEAR6P5","5.02","0.01",""
+"Mean","","4.48","0.01",""
+"Standard deviation","","0.69","0.00",""
+"Minimum","","3.64","0.01",""
+"Maximum","","5.19","0.01",""
+
+Results Table 2
+
+
