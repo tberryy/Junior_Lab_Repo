@@ -1,0 +1,34 @@
+﻿2024 Data Report
+Generated: 2026-07-07 18:04
+Source:    .\2024raw
+Output:    .\2024_organized
+========================================
+
+CRNs processed by day:
+
+tuesday: 3 crns
+  10415
+  10422
+  10431
+
+wensday: 3 crns
+  10416
+  10424
+  10425
+
+thursday: 4 crns
+  10419
+  10421
+  10423
+  10430
+
+friday: 2 crns
+  104
+  10420
+
+Total samples: 12
+
+Sample errors:
+  thursday_10430 - compression: EXTRA 1 file(s) - check for duplicate runs (found 3, expected 2)
+  _unassigned - fracture: UNASSIGNED - loose export folder does not belong to any sample folder
+  old - : UNRECOGNIZED folder name - could not parse day/sample id

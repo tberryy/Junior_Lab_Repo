@@ -15,7 +15,7 @@
             monday\monday_10446\{compression, fracture, tension}
             tuesday\...
             wensday\...
-            thrusday\...
+            thursday\...
             friday\...
 
     Only the time-series data CSVs (Time / Displacement / Force header) are
@@ -66,20 +66,36 @@ if (-not $ReportPath) {
 }
 
 # --- Day-name normalization -------------------------------------------------
-# Output day-folder names, matching the existing OrganizedData\2026 layout.
-# (Note: "wensday" and "thrusday" are spelled this way on purpose to match
-#  your existing organized folder. Edit here if you fix the spelling there.)
+# Output day-folder names. Misspelled input folder names (thrusday, wensday)
+# are still recognized, but output uses the spelling on the right-hand side.
+# (Note: "wensday" is still spelled this way to match your existing organized
+#  folder. Edit here if you fix the spelling there.)
 $DayMap = @{
     'monday'    = 'monday'
+    'mon'       = 'monday'
     'tuesday'   = 'tuesday'
+    'tue'       = 'tuesday'
+    'tues'      = 'tuesday'
+    'tuesdsay'  = 'tuesday'   # common typo
     'wednesday' = 'wensday'
     'wensday'   = 'wensday'
-    'thursday'  = 'thrusday'
-    'thrusday'  = 'thrusday'
+    'wed'       = 'wensday'
+    'weds'      = 'wensday'
+    'thursday'  = 'thursday'
+    'thrusday'  = 'thursday'
+    'thu'       = 'thursday'
+    'thur'      = 'thursday'
+    'thurs'     = 'thursday'
     'friday'    = 'friday'
+    'fri'       = 'friday'
     'saturday'  = 'saturday'
+    'sat'       = 'saturday'
     'sunday'    = 'sunday'
+    'sun'       = 'sunday'
 }
+
+# Top-level folder names to silently ignore (not organized, not reported)
+$IgnorePatterns = @('^batch\s*\d*$')
 
 $Expected = @{
     'fracture'    = @{ Min = $ExpectedFractureMin;    Max = $ExpectedFractureMax }
@@ -231,6 +247,15 @@ $looseExports = @()
 $unknownDirs  = @()
 
 foreach ($dir in $topDirs) {
+    $ignored = $false
+    foreach ($pat in $IgnorePatterns) {
+        if ($dir.Name -match $pat) { $ignored = $true; break }
+    }
+    if ($ignored) {
+        Write-Host "Ignoring folder: $($dir.Name)" -ForegroundColor DarkGray
+        continue
+    }
+
     if ($dir.Name -like '*_Exports') {
         $looseExports += $dir
     } elseif ($dir.Name -match '^([A-Za-z]+)[ _-]?(\d+)$' -and $DayMap.ContainsKey($Matches[1].ToLower())) {
@@ -358,7 +383,7 @@ if ($yearVotes.Count -gt 0) {
     $year = ($yearVotes.GetEnumerator() | Sort-Object Value -Descending | Select-Object -First 1).Key
 }
 
-$dayOrder = @('monday', 'tuesday', 'wensday', 'thrusday', 'friday', 'saturday', 'sunday')
+$dayOrder = @('monday', 'tuesday', 'wensday', 'thursday', 'friday', 'saturday', 'sunday')
 $lines    = New-Object System.Collections.Generic.List[string]
 
 $lines.Add("$year Data Report".Trim())
