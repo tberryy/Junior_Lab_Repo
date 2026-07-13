@@ -70,69 +70,33 @@ if (-not $ReportPath) {
 # are still recognized, but output uses the spelling on the right-hand side.
 # (Note: "wensday" is still spelled this way to match your existing organized
 #  folder. Edit here if you fix the spelling there.)
-# Known typos/alternate spellings that aren't simple prefixes of the day name.
-# Simple abbreviations (mon, tue, tues, wed, thur, fri...) are handled
-# automatically by prefix matching in Get-DayName - no need to list them.
-$DayTypoMap = @{
-    'wensday'   = 'wensday'    # existing organized-folder spelling
-    'wendsday'  = 'wensday'
-    'wednsday'  = 'wensday'
-    'wedensday' = 'wensday'
-    'thrusday'  = 'thursday'   # transposed
-    'thursady'  = 'thursday'
-    'tuesdsay'  = 'tuesday'
-    'teusday'   = 'tuesday'
-    'tusday'    = 'tuesday'
-    'firday'    = 'friday'
-    'staurday'  = 'saturday'
-}
-
-# Correct spelling -> output folder name (wednesday intentionally maps to
-# "wensday" to match the existing organized tree; edit if you fix that).
-$CanonicalDays = [ordered]@{
+$DayMap = @{
     'monday'    = 'monday'
+    'mon'       = 'monday'
     'tuesday'   = 'tuesday'
+    'tue'       = 'tuesday'
+    'tues'      = 'tuesday'
+    'tuesdsay'  = 'tuesday'   # common typo
     'wednesday' = 'wensday'
+    'wensday'   = 'wensday'
+    'wed'       = 'wensday'
+    'weds'      = 'wensday'
+    'wen'       = 'wensday'
     'thursday'  = 'thursday'
+    'thrusday'  = 'thursday'
+    'thu'       = 'thursday'
+    'thur'      = 'thursday'
+    'thurs'     = 'thursday'
     'friday'    = 'friday'
+    'fri'       = 'friday'
     'saturday'  = 'saturday'
+    'sat'       = 'saturday'
     'sunday'    = 'sunday'
-}
-
-# Resolve any day word (full name, abbreviation, typo, any case) to the
-# output day-folder name. Returns $null if it isn't recognizably a day.
-function Get-DayName([string]$word) {
-    $w = $word.Trim().ToLower()
-    if ($w.Length -lt 2) { return $null }   # single letters are too ambiguous
-
-    if ($DayTypoMap.Contains($w)) { return $DayTypoMap[$w] }
-
-    foreach ($day in $CanonicalDays.Keys) {
-        # Abbreviation: word is a prefix of the day name ("mon", "thur", "tue")
-        if ($day.StartsWith($w)) { return $CanonicalDays[$day] }
-        # Overshoot typo: day name is a prefix of the word ("mondayy", "fridays")
-        if ($w.StartsWith($day)) { return $CanonicalDays[$day] }
-    }
-    # Also accept prefixes of the "wensday" output spelling ("wens", "wensd")
-    if ('wensday'.StartsWith($w) -and $w.StartsWith('we')) { return 'wensday' }
-
-    return $null
-}
-
-# Parse a sample folder name into day + id, tolerating any case, any mix of
-# space/underscore/hyphen/dot separators (or none), and trailing separators:
-#   "fRIDAY-10436", "MONDAY 91284", "Tuesday10454", "TUE 80463",
-#   "wed_10440", "Thursday - 10435", "monday.10444 "
-# Returns [pscustomobject] with Day and Id, or $null if unrecognized.
-function Resolve-SampleName([string]$name) {
-    if ($name -notmatch '^\s*([A-Za-z]+)[\s._-]*(\d+)[\s._-]*$') { return $null }
-    $day = Get-DayName $Matches[1]
-    if (-not $day) { return $null }
-    return [pscustomobject]@{ Day = $day; Id = $Matches[2] }
+    'sun'       = 'sunday'
 }
 
 # Top-level folder names to silently ignore (not organized, not reported)
-$IgnorePatterns = @('^batch[\s._-]*\d*$')
+$IgnorePatterns = @('^batch\s*\d*$')
 
 $Expected = @{
     'fracture'    = @{ Min = $ExpectedFractureMin;    Max = $ExpectedFractureMax }
@@ -154,6 +118,26 @@ function Get-Category([string]$name) {
     return $null
 }
 
+# Classify a CSV by its filename prefix first; if that fails (e.g. renamed
+# files like CNT.csv), fall back to its ancestor folder names between the
+# file and the sample root. "Compact Tension" / "frac" folders => fracture.
+# NOTE: compact/frac must be checked BEFORE tension ("COMPACT TENSION").
+function Get-CsvCategory([System.IO.FileInfo]$csv, [string]$sampleRoot) {
+    $byName = Get-Category $csv.Name
+    if ($byName) { return $byName }
+
+    $dir = $csv.Directory
+    while ($dir -and $dir.FullName.Length -ge $sampleRoot.Length) {
+        $n = $dir.Name
+        if ($n -match 'compact' -or $n -match 'frac')  { return 'fracture' }
+        if ($n -match 'compress')                       { return 'compression' }
+        if ($n -match 'tens')                           { return 'tension' }
+        if ($dir.FullName -eq $sampleRoot) { break }
+        $dir = $dir.Parent
+    }
+    return $null
+}
+
 # A "data" CSV has a Time,Displacement,Force header near the top;
 # the "Results Table" summary CSVs do not.
 function Test-IsDataCsv([string]$path) {
@@ -162,6 +146,58 @@ function Test-IsDataCsv([string]$path) {
         if ($line -match '^\s*Time\s*,') { return $true }
     }
     return $false
+}
+
+# Recursively find every data CSV under $root, classify it, and copy it into
+# <sampleDest>\<category>. Returns hashtable: category -> count copied.
+function Copy-SampleCsvs([string]$root, [string]$sampleDest) {
+    $counts = @{}
+    $csvs = Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.csv' -ErrorAction SilentlyContinue
+
+    foreach ($csv in $csvs) {
+        if (-not (Test-IsDataCsv $csv.FullName)) {
+            Write-Host "  skip summary CSV: $($csv.Name)" -ForegroundColor DarkGray
+            continue
+        }
+
+        $category = Get-CsvCategory $csv $root
+        if (-not $category) {
+            Write-Warning "  Could not classify CSV (skipped): $($csv.FullName.Substring($root.Length))"
+            continue
+        }
+
+        $destDir = Join-Path $sampleDest $category
+        if (-not (Test-Path -LiteralPath $destDir)) {
+            if (-not $script:DryRun) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+        }
+
+        # Handle name collisions (e.g. two renamed CNT.csv files from
+        # different runs). Identical size => duplicate copy, skip it.
+        $target = Join-Path $destDir $csv.Name
+        if ((Test-Path -LiteralPath $target) -and -not $script:DryRun) {
+            $existing = Get-Item -LiteralPath $target
+            if ($existing.Length -eq $csv.Length) {
+                Write-Host "  duplicate skipped: $($csv.Name)" -ForegroundColor DarkGray
+                continue
+            }
+            $i = 2
+            $base = [System.IO.Path]::GetFileNameWithoutExtension($csv.Name)
+            do {
+                $target = Join-Path $destDir "${base}_$i.csv"
+                $i++
+            } while (Test-Path -LiteralPath $target)
+            Write-Warning "  name collision, saving as: $(Split-Path $target -Leaf)"
+        }
+
+        if ($script:DryRun) {
+            Write-Host "  [DryRun] copy  $($csv.Name)  ->  $category\"
+        } else {
+            Copy-Item -LiteralPath $csv.FullName -Destination $target -Force
+            Write-Host "  copied  $($csv.Name)  ->  $category\"
+        }
+        if ($counts.ContainsKey($category)) { $counts[$category]++ } else { $counts[$category] = 1 }
+    }
+    return $counts
 }
 
 # Copy the data CSVs from one *_Exports folder into <sampleDest>\<category>.
@@ -295,13 +331,10 @@ foreach ($dir in $topDirs) {
 
     if ($dir.Name -like '*_Exports') {
         $looseExports += $dir
+    } elseif ($dir.Name -match '^([A-Za-z]+)[ _-]?(\d+)$' -and $DayMap.ContainsKey($Matches[1].ToLower())) {
+        $sampleDirs += $dir
     } else {
-        $parsed = Resolve-SampleName $dir.Name
-        if ($parsed) {
-            $sampleDirs += [pscustomobject]@{ Dir = $dir; Day = $parsed.Day; Id = $parsed.Id }
-        } else {
-            $unknownDirs += $dir
-        }
+        $unknownDirs += $dir
     }
 }
 
@@ -314,10 +347,10 @@ if (-not $sampleDirs -and -not $looseExports) {
 $crnsByDay = @{}   # day -> list of CRN ids processed
 $yearVotes = @{}   # year -> count (detected from export folder dates)
 
-foreach ($entry in $sampleDirs) {
-    $sample  = $entry.Dir
-    $day     = $entry.Day
-    $id      = $entry.Id
+foreach ($sample in $sampleDirs) {
+    $null    = $sample.Name -match '^([A-Za-z]+)[ _-]?(\d+)$'
+    $day     = $DayMap[$Matches[1].ToLower()]
+    $id      = $Matches[2]
     $newName = "${day}_${id}"
     $destDir = Join-Path (Join-Path $Destination $day) $newName
 
@@ -325,7 +358,7 @@ foreach ($entry in $sampleDirs) {
     $crnsByDay[$day].Add($id)
 
     # Detect the year from export/test folder names like TENSION_20260420_...
-    foreach ($item in (Get-ChildItem -LiteralPath $sample.FullName)) {
+    foreach ($item in (Get-ChildItem -LiteralPath $sample.FullName -Recurse -File -ErrorAction SilentlyContinue)) {
         if ($item.Name -match '_((19|20)\d{2})\d{4}_') {
             $y = $Matches[1]
             if ($yearVotes.ContainsKey($y)) { $yearVotes[$y]++ } else { $yearVotes[$y] = 1 }
@@ -340,14 +373,12 @@ foreach ($entry in $sampleDirs) {
     # Track how many data CSVs we found per category for this sample
     $found = @{ 'compression' = 0; 'fracture' = 0; 'tension' = 0 }
 
-    $exportDirs = Get-ChildItem -LiteralPath $sample.FullName -Directory -Filter '*_Exports'
-    if (-not $exportDirs) {
-        Write-Warning "  No *_Exports folders found inside $($sample.Name)"
+    $anyCsvs = Get-ChildItem -LiteralPath $sample.FullName -Recurse -File -Filter '*.csv' -ErrorAction SilentlyContinue
+    if (-not $anyCsvs) {
+        Write-Warning "  No CSV files found anywhere inside $($sample.Name)"
     } else {
-        foreach ($exp in $exportDirs) {
-            $c = Copy-ExportFolder $exp $destDir
-            foreach ($k in $c.Keys) { $found[$k] += $c[$k] }
-        }
+        $c = Copy-SampleCsvs $sample.FullName $destDir
+        foreach ($k in $c.Keys) { $found[$k] += $c[$k] }
     }
 
     # QC check against expected counts (Min-Max range per category)
@@ -356,7 +387,7 @@ foreach ($entry in $sampleDirs) {
         $expLabel = Get-ExpectedLabel $range
         $got      = $found[$cat]
         if ($got -lt $range.Min -or $got -gt $range.Max) {
-            if ($got -eq 0 -and -not $exportDirs) { $issue = 'NO EXPORTS FOUND - test was never exported from the machine' }
+            if ($got -eq 0 -and -not $anyCsvs)    { $issue = 'NO EXPORTS FOUND - test was never exported from the machine' }
             elseif ($got -eq 0)                   { $issue = 'MISSING - no data files for this test' }
             elseif ($got -lt $range.Min)          { $issue = "MISSING $($range.Min - $got) file(s)" }
             else                                  { $issue = "EXTRA $($got - $range.Max) file(s) - check for duplicate runs" }
@@ -381,11 +412,11 @@ foreach ($loose in $looseExports) {
     Write-Host "Loose export folder: $($loose.Name)" -ForegroundColor Magenta
 
     $owner = $sampleDirs | Where-Object {
-        Test-Path -LiteralPath (Join-Path $_.Dir.FullName $loose.Name)
+        Test-Path -LiteralPath (Join-Path $_.FullName $loose.Name)
     }
 
     if ($owner) {
-        Write-Host "  Duplicate of the copy inside $($owner[0].Dir.Name) - skipping." -ForegroundColor DarkGray
+        Write-Host "  Duplicate of the copy inside $($owner[0].Name) - skipping." -ForegroundColor DarkGray
         continue
     }
 
