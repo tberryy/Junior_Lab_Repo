@@ -70,32 +70,69 @@ if (-not $ReportPath) {
 # are still recognized, but output uses the spelling on the right-hand side.
 # (Note: "wensday" is still spelled this way to match your existing organized
 #  folder. Edit here if you fix the spelling there.)
-$DayMap = @{
+# Known typos/alternate spellings that aren't simple prefixes of the day name.
+# Simple abbreviations (mon, tue, tues, wed, thur, fri...) are handled
+# automatically by prefix matching in Get-DayName - no need to list them.
+$DayTypoMap = @{
+    'wensday'   = 'wensday'    # existing organized-folder spelling
+    'wendsday'  = 'wensday'
+    'wednsday'  = 'wensday'
+    'wedensday' = 'wensday'
+    'thrusday'  = 'thursday'   # transposed
+    'thursady'  = 'thursday'
+    'tuesdsay'  = 'tuesday'
+    'teusday'   = 'tuesday'
+    'tusday'    = 'tuesday'
+    'firday'    = 'friday'
+    'staurday'  = 'saturday'
+}
+
+# Correct spelling -> output folder name (wednesday intentionally maps to
+# "wensday" to match the existing organized tree; edit if you fix that).
+$CanonicalDays = [ordered]@{
     'monday'    = 'monday'
-    'mon'       = 'monday'
     'tuesday'   = 'tuesday'
-    'tue'       = 'tuesday'
-    'tues'      = 'tuesday'
-    'tuesdsay'  = 'tuesday'   # common typo
     'wednesday' = 'wensday'
-    'wensday'   = 'wensday'
-    'wed'       = 'wensday'
-    'weds'      = 'wensday'
     'thursday'  = 'thursday'
-    'thrusday'  = 'thursday'
-    'thu'       = 'thursday'
-    'thur'      = 'thursday'
-    'thurs'     = 'thursday'
     'friday'    = 'friday'
-    'fri'       = 'friday'
     'saturday'  = 'saturday'
-    'sat'       = 'saturday'
     'sunday'    = 'sunday'
-    'sun'       = 'sunday'
+}
+
+# Resolve any day word (full name, abbreviation, typo, any case) to the
+# output day-folder name. Returns $null if it isn't recognizably a day.
+function Get-DayName([string]$word) {
+    $w = $word.Trim().ToLower()
+    if ($w.Length -lt 2) { return $null }   # single letters are too ambiguous
+
+    if ($DayTypoMap.Contains($w)) { return $DayTypoMap[$w] }
+
+    foreach ($day in $CanonicalDays.Keys) {
+        # Abbreviation: word is a prefix of the day name ("mon", "thur", "tue")
+        if ($day.StartsWith($w)) { return $CanonicalDays[$day] }
+        # Overshoot typo: day name is a prefix of the word ("mondayy", "fridays")
+        if ($w.StartsWith($day)) { return $CanonicalDays[$day] }
+    }
+    # Also accept prefixes of the "wensday" output spelling ("wens", "wensd")
+    if ('wensday'.StartsWith($w) -and $w.StartsWith('we')) { return 'wensday' }
+
+    return $null
+}
+
+# Parse a sample folder name into day + id, tolerating any case, any mix of
+# space/underscore/hyphen/dot separators (or none), and trailing separators:
+#   "fRIDAY-10436", "MONDAY 91284", "Tuesday10454", "TUE 80463",
+#   "wed_10440", "Thursday - 10435", "monday.10444 "
+# Returns [pscustomobject] with Day and Id, or $null if unrecognized.
+function Resolve-SampleName([string]$name) {
+    if ($name -notmatch '^\s*([A-Za-z]+)[\s._-]*(\d+)[\s._-]*$') { return $null }
+    $day = Get-DayName $Matches[1]
+    if (-not $day) { return $null }
+    return [pscustomobject]@{ Day = $day; Id = $Matches[2] }
 }
 
 # Top-level folder names to silently ignore (not organized, not reported)
-$IgnorePatterns = @('^batch\s*\d*$')
+$IgnorePatterns = @('^batch[\s._-]*\d*$')
 
 $Expected = @{
     'fracture'    = @{ Min = $ExpectedFractureMin;    Max = $ExpectedFractureMax }
@@ -258,10 +295,13 @@ foreach ($dir in $topDirs) {
 
     if ($dir.Name -like '*_Exports') {
         $looseExports += $dir
-    } elseif ($dir.Name -match '^([A-Za-z]+)[ _-]?(\d+)$' -and $DayMap.ContainsKey($Matches[1].ToLower())) {
-        $sampleDirs += $dir
     } else {
-        $unknownDirs += $dir
+        $parsed = Resolve-SampleName $dir.Name
+        if ($parsed) {
+            $sampleDirs += [pscustomobject]@{ Dir = $dir; Day = $parsed.Day; Id = $parsed.Id }
+        } else {
+            $unknownDirs += $dir
+        }
     }
 }
 
@@ -274,10 +314,10 @@ if (-not $sampleDirs -and -not $looseExports) {
 $crnsByDay = @{}   # day -> list of CRN ids processed
 $yearVotes = @{}   # year -> count (detected from export folder dates)
 
-foreach ($sample in $sampleDirs) {
-    $null    = $sample.Name -match '^([A-Za-z]+)[ _-]?(\d+)$'
-    $day     = $DayMap[$Matches[1].ToLower()]
-    $id      = $Matches[2]
+foreach ($entry in $sampleDirs) {
+    $sample  = $entry.Dir
+    $day     = $entry.Day
+    $id      = $entry.Id
     $newName = "${day}_${id}"
     $destDir = Join-Path (Join-Path $Destination $day) $newName
 
@@ -341,11 +381,11 @@ foreach ($loose in $looseExports) {
     Write-Host "Loose export folder: $($loose.Name)" -ForegroundColor Magenta
 
     $owner = $sampleDirs | Where-Object {
-        Test-Path -LiteralPath (Join-Path $_.FullName $loose.Name)
+        Test-Path -LiteralPath (Join-Path $_.Dir.FullName $loose.Name)
     }
 
     if ($owner) {
-        Write-Host "  Duplicate of the copy inside $($owner[0].Name) - skipping." -ForegroundColor DarkGray
+        Write-Host "  Duplicate of the copy inside $($owner[0].Dir.Name) - skipping." -ForegroundColor DarkGray
         continue
     }
 

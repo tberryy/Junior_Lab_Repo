@@ -1,0 +1,44 @@
+﻿2025 Data Report
+Generated: 2026-07-13 13:12
+Source:    .\2025raw
+Output:    .\2025_organized
+========================================
+
+CRNs processed by day:
+
+monday: 4 crns
+  10444
+  10448
+  10451
+  91284
+
+tuesday: 5 crns
+  10438
+  10447
+  10452
+  10454
+  80463
+
+wensday: 5 crns
+  10440
+  10441
+  10446
+  10453
+  80464
+
+thursday: 2 crns
+  10435
+  10437
+
+friday: 2 crns
+  10436
+  10450
+
+Total samples: 18
+
+Sample errors:
+  tuesday_10438 - compression: MISSING - no data files for this test (found 0, expected 2)
+  tuesday_10438 - fracture: MISSING - no data files for this test (found 0, expected 8)
+  tuesday_10438 - tension: MISSING - no data files for this test (found 0, expected 2)
+  tuesday_10447 - fracture: MISSING - no data files for this test (found 0, expected 8)
+  tuesday_10454 - fracture: MISSING - no data files for this test (found 0, expected 8)
