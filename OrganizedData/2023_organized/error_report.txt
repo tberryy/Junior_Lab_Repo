@@ -1,0 +1,51 @@
+﻿2023 Data Report
+Generated: 2026-07-14 12:31
+Source:    .\raw\2023fix
+Output:    .\2023_organized
+========================================
+
+CRNs processed by day:
+
+--- batch1 ---
+
+monday: 4 crns
+  033016
+  040308
+  040309
+  040316
+
+tuesday: 5 crns
+  040308
+  040411
+  040414
+  040416
+  040417
+
+wensday: 3 crns
+  040508
+  040514
+  040517
+
+thursday: 4 crns
+  040608
+  040611
+  040614
+  040618
+
+friday: 6 crns
+  040414
+  040708
+  040714
+  042109
+  042111
+  042115
+
+--- batch2 ---
+
+wensday: 1 crns
+  111518
+
+Total samples: 23
+
+Sample errors:
+  None - all samples had the expected number of files.
