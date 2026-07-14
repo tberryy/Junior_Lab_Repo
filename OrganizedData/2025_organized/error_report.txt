@@ -1,5 +1,5 @@
 ﻿2025 Data Report
-Generated: 2026-07-14 11:34
+Generated: 2026-07-14 11:43
 Source:    .\raw\2025raw
 Output:    .\2025_organized
 ========================================
@@ -66,9 +66,4 @@ friday: 2 crns
 Total samples: 33
 
 Sample errors:
-  batch1\monday_10448 - compression: MISSING - no data files for this test (found 0, expected 2)
-  batch1\monday_10448 - tension: MISSING - no data files for this test (found 0, expected 2)
-  batch1\thursday_10435 - tension: EXTRA 2 file(s) - check for duplicate runs (found 4, expected 2)
-  batch1\tuesday_10454 - compression: EXTRA 1 file(s) - check for duplicate runs (found 3, expected 2)
-  batch1\wensday_10453 - fracture: MISSING 1 file(s) (found 7, expected 8)
-  batch2\thursday_10437 - tension: EXTRA 1 file(s) - check for duplicate runs (found 3, expected 2)
+  None - all samples had the expected number of files.
