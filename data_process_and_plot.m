@@ -1,0 +1,836 @@
+clear; clc; close all;
+set(0,'DefaultFigureVisible','on');
+
+%% ==========================================================
+%% Run this script from inside Junior_Lab_Repo
+%% ==========================================================
+
+repoFolder = pwd;
+organizedFolder = fullfile(repoFolder, 'OrganizedData');
+
+days = {'monday','tuesday','wednesday','thursday','friday'};
+tests = {'Compression','Tension','Fracture'};
+materials = {'CNT','NEAT'};
+
+%% ==========================================================
+%% Plot limits
+%% ==========================================================
+
+plotLimits.compression = 0.35;   % strain
+plotLimits.tension     = 0.015;  % strain
+plotLimits.fracture    = 3.5;    % displacement in mm
+
+%% Classify all specimens
+classifiedAll = classifyAllSpecimens(organizedFolder, days);
+
+if isempty(classifiedAll)
+    error('No specimens were classified. Check the OrganizedData folder.');
+end
+
+%% Plot each organized year
+years = unique(classifiedAll.Year);
+
+for y = 1:length(years)
+
+    yearName = string(years(y));
+    yearFolder = fullfile(organizedFolder, yearName);
+
+    yearNumber = erase(yearName, "_organized");
+
+    dimensionFile = fullfile( ...
+        yearFolder, ...
+        "SpecimenDimensions" + yearNumber + ".xlsx");
+
+    if ~isfile(dimensionFile)
+        warning('Dimension file not found: %s', dimensionFile);
+        continue;
+    end
+
+    dims = readtable(dimensionFile);
+
+    %% Rename material column if needed
+    if ~ismember('Material', dims.Properties.VariableNames)
+        dims.Properties.VariableNames{2} = 'Material';
+    end
+
+    plotFolder = fullfile(yearFolder, 'Combined_Day_Plots');
+
+    if ~isfolder(plotFolder)
+        mkdir(plotFolder);
+    end
+
+    yearRows = strcmpi(string(classifiedAll.Year), yearName);
+    yearClassified = classifiedAll(yearRows,:);
+
+    for t = 1:length(tests)
+
+        for m = 1:length(materials)
+
+            plotCombinedDays( ...
+                yearClassified, ...
+                dims, ...
+                tests{t}, ...
+                materials{m}, ...
+                days, ...
+                plotFolder, ...
+                plotLimits);
+
+        end
+    end
+end
+
+fprintf('\nFinished creating plots.\n');
+
+%% ========================================================================
+%% Classify all organized folders
+%% ========================================================================
+
+function classifiedAll = classifyAllSpecimens(organizedFolder, days)
+
+    organizedYears = dir(fullfile(organizedFolder, '*_organized'));
+    organizedYears = organizedYears([organizedYears.isdir]);
+
+    classifiedAll = table();
+
+    for y = 1:length(organizedYears)
+
+        yearName = organizedYears(y).name;
+        yearFolder = fullfile(organizedFolder, yearName);
+
+        fprintf('\nClassifying %s...\n', yearName);
+
+        yearResults = table();
+
+        for d = 1:length(days)
+
+            dayName = days{d};
+            dayFolder = fullfile(yearFolder, dayName);
+
+            if ~isfolder(dayFolder)
+                warning('Day folder not found: %s', dayFolder);
+                continue;
+            end
+
+            groupFolders = dir(dayFolder);
+            groupFolders = groupFolders([groupFolders.isdir]);
+
+            groupFolders = groupFolders( ...
+                ~ismember({groupFolders.name},{'.','..'}));
+
+            for g = 1:length(groupFolders)
+
+                groupName = groupFolders(g).name;
+                groupPath = fullfile(dayFolder, groupName);
+
+                compressionFolder = fullfile(groupPath,'compression');
+                tensionFolder     = fullfile(groupPath,'tension');
+                fractureFolder    = fullfile(groupPath,'fracture');
+
+                %% Compression: highest force is CNT
+                if isfolder(compressionFolder)
+
+                    temp = classifyByMaxForce( ...
+                        compressionFolder, ...
+                        1, ...
+                        yearName, ...
+                        dayName, ...
+                        groupName, ...
+                        "Compression");
+
+                    yearResults = [yearResults; temp];
+                end
+
+                %% Tension: highest force is CNT
+                if isfolder(tensionFolder)
+
+                    temp = classifyByMaxForce( ...
+                        tensionFolder, ...
+                        1, ...
+                        yearName, ...
+                        dayName, ...
+                        groupName, ...
+                        "Tension");
+
+                    yearResults = [yearResults; temp];
+                end
+
+                %% Fracture: highest four forces are CNT
+                if isfolder(fractureFolder)
+
+                    temp = classifyByMaxForce( ...
+                        fractureFolder, ...
+                        4, ...
+                        yearName, ...
+                        dayName, ...
+                        groupName, ...
+                        "Fracture");
+
+                    yearResults = [yearResults; temp];
+                end
+
+            end
+        end
+
+        classifiedAll = [classifiedAll; yearResults];
+
+        %% Saving the classification file is optional
+        outputFile = fullfile( ...
+            yearFolder, ...
+            'Classified_Max_Force_Results.xlsx');
+
+        try
+            writetable(yearResults, outputFile);
+
+            fprintf('Saved classification file:\n%s\n', ...
+                outputFile);
+
+        catch ME
+            warning( ...
+                'Could not save classification file. Plotting will continue.\n%s', ...
+                ME.message);
+        end
+
+    end
+end
+
+%% ========================================================================
+%% Classify files in one test folder
+%% ========================================================================
+
+function results = classifyByMaxForce( ...
+    folderPath, numCNT, yearName, dayName, groupName, testName)
+
+    csvFiles = dir(fullfile(folderPath, '*.csv'));
+    numFiles = length(csvFiles);
+
+    if numFiles == 0
+        results = table();
+        return;
+    end
+
+    fileNames = strings(numFiles,1);
+    filePaths = strings(numFiles,1);
+    maxForce = NaN(numFiles,1);
+
+    for i = 1:numFiles
+
+        filePath = fullfile( ...
+            folderPath, ...
+            csvFiles(i).name);
+
+        data = readCSVNumeric(filePath);
+
+        if size(data,2) < 3
+            warning('File has fewer than 3 columns: %s', filePath);
+
+            fileNames(i) = string(csvFiles(i).name);
+            filePaths(i) = string(filePath);
+            continue;
+        end
+
+        force = data(:,3);
+        force = force(~isnan(force));
+
+        fileNames(i) = string(csvFiles(i).name);
+        filePaths(i) = string(filePath);
+
+        if ~isempty(force)
+            maxForce(i) = max(force);
+        end
+
+    end
+
+    results = table( ...
+        fileNames, ...
+        filePaths, ...
+        maxForce, ...
+        'VariableNames', ...
+        {'OriginalFileName','FilePath','MaxForce'});
+
+    %% Highest maximum force first
+    results = sortrows(results,'MaxForce','descend');
+
+    material = strings(numFiles,1);
+    sampleName = strings(numFiles,1);
+
+    cntCounter = 1;
+    neatCounter = 1;
+
+    for i = 1:numFiles
+
+        if i <= numCNT
+
+            material(i) = "CNT";
+            sampleName(i) = "CNT_" + string(cntCounter);
+
+            cntCounter = cntCounter + 1;
+
+        else
+
+            material(i) = "NEAT";
+            sampleName(i) = "NEAT_" + string(neatCounter);
+
+            neatCounter = neatCounter + 1;
+
+        end
+    end
+
+    results.Year = repmat(string(yearName),numFiles,1);
+    results.Day = repmat(string(dayName),numFiles,1);
+    results.Group = repmat(string(groupName),numFiles,1);
+    results.Test = repmat(string(testName),numFiles,1);
+    results.Material = material;
+    results.SampleName = sampleName;
+
+    results = results(:,{ ...
+        'Year', ...
+        'Day', ...
+        'Group', ...
+        'Test', ...
+        'SampleName', ...
+        'Material', ...
+        'OriginalFileName', ...
+        'FilePath', ...
+        'MaxForce'});
+end
+
+%% ========================================================================
+%% Plot all Monday-Friday curves for one test and one material
+%% ========================================================================
+
+function plotCombinedDays( ...
+    classified, ...
+    dims, ...
+    testName, ...
+    materialName, ...
+    days, ...
+    plotFolder, ...
+    plotLimits)
+
+    fig = figure( ...
+        'Visible','on', ...
+        'Units','normalized', ...
+        'Position',[0.02 0.05 0.96 0.88]);
+
+    ax = axes(fig);
+
+    hold(ax,'on');
+    grid(ax,'on');
+    box(ax,'on');
+
+    %% Explicit legend storage
+    plotHandles = gobjects(0);
+    legendLabels = strings(0);
+
+    %% Count possible curves
+    numCurves = sum( ...
+        strcmpi(strtrim(string(classified.Test)), ...
+                 strtrim(string(testName))) & ...
+        strcmpi(strtrim(string(classified.Material)), ...
+                 strtrim(string(materialName))));
+
+    colors = turbo(max(numCurves,1));
+
+    %% Day line styles
+    lineStyles = {'-','--',':','-.','-'};
+
+    colorIndex = 1;
+    plotCount = 0;
+
+    for d = 1:length(days)
+
+        dayName = days{d};
+        lineStyle = lineStyles{d};
+
+        rows = ...
+            strcmpi(strtrim(string(classified.Test)), ...
+                    strtrim(string(testName))) & ...
+            strcmpi(strtrim(string(classified.Material)), ...
+                    strtrim(string(materialName))) & ...
+            strcmpi(strtrim(string(classified.Day)), ...
+                    strtrim(string(dayName)));
+
+        selected = classified(rows,:);
+
+        fprintf('%s %s %s: %d files found\n', ...
+            testName, ...
+            materialName, ...
+            upper(dayName), ...
+            height(selected));
+
+        for i = 1:height(selected)
+
+            csvPath = string(selected.FilePath(i));
+
+            if ~isfile(csvPath)
+                warning('CSV not found: %s', csvPath);
+                continue;
+            end
+
+            groupName = string(selected.Group(i));
+
+            sectionNumber = str2double( ...
+                regexprep(groupName,'\D',''));
+
+            sampleName = string(selected.SampleName(i));
+
+            sampleNumber = str2double( ...
+                regexprep(sampleName,'\D',''));
+
+            data = readCSVNumeric(csvPath);
+
+            if size(data,2) < 3
+                warning( ...
+                    'CSV does not have at least three columns: %s', ...
+                    csvPath);
+                continue;
+            end
+
+            displacement = data(:,2);
+            force = data(:,3);
+
+            valid = ...
+                ~isnan(displacement) & ...
+                ~isnan(force) & ...
+                ~isinf(displacement) & ...
+                ~isinf(force);
+
+            displacement = displacement(valid);
+            force = force(valid);
+
+            if isempty(displacement) || isempty(force)
+                warning('No valid numeric data in: %s', csvPath);
+                continue;
+            end
+
+            %% ============================================================
+            %% Fracture processing
+            %% ============================================================
+
+            if strcmpi(testName,'Fracture')
+
+                peakForceOriginal = max(force);
+
+                if isempty(peakForceOriginal) || ...
+                        isnan(peakForceOriginal) || ...
+                        peakForceOriginal <= 0
+
+                    warning( ...
+                        'Invalid fracture force data: %s', ...
+                        csvPath);
+                    continue;
+                end
+
+                %% Detect loading start at 5% of original peak
+                startThreshold = 0.05 * peakForceOriginal;
+
+                startIndex = find( ...
+                    force >= startThreshold, ...
+                    1, ...
+                    'first');
+
+                if isempty(startIndex)
+                    warning( ...
+                        'Could not detect fracture loading start: %s', ...
+                        csvPath);
+                    continue;
+                end
+
+                displacement = displacement(startIndex:end);
+                force = force(startIndex:end);
+
+                %% Shift curve to origin
+                displacement = displacement - displacement(1);
+                force = force - force(1);
+
+                displacement(displacement < 0) = 0;
+                force(force < 0) = 0;
+
+                %% Find shifted peak
+                [peakForceShifted, peakIndex] = max(force);
+
+                %% Crop after force falls below 20% of peak
+                endThreshold = 0.20 * peakForceShifted;
+
+                dropRelative = find( ...
+                    force(peakIndex:end) <= endThreshold, ...
+                    1, ...
+                    'first');
+
+                if ~isempty(dropRelative)
+
+                    endIndex = peakIndex + dropRelative - 1;
+
+                    displacement = displacement(1:endIndex);
+                    force = force(1:endIndex);
+
+                end
+
+                %% Reject only extreme peak-displacement outliers
+                displacementAtPeak = displacement(peakIndex);
+
+                maxAllowedPeakDisplacement = 4.0;
+
+                if displacementAtPeak > maxAllowedPeakDisplacement
+
+                    warning( ...
+                        ['Skipping fracture outlier: %s\n' ...
+                         'Peak displacement = %.3f mm'], ...
+                        csvPath, ...
+                        displacementAtPeak);
+
+                    continue;
+                end
+
+                %% Apply fracture plotting limit
+                keep = ...
+                    displacement >= 0 & ...
+                    displacement <= plotLimits.fracture;
+
+                displacement = displacement(keep);
+                force = force(keep);
+
+                if isempty(displacement) || isempty(force)
+                    warning( ...
+                        'Fracture data empty after cropping: %s', ...
+                        csvPath);
+                    continue;
+                end
+
+                %% Plot fracture
+              h = plot(displacement, force, ...
+              'Color', colors(colorIndex,:), ...
+              'LineStyle', lineStyle, ...
+              'LineWidth', 1.8);
+
+              h.UserData = csvPath;
+
+            %% ============================================================
+            %% Compression and tension processing
+            %% ============================================================
+
+            else
+
+                displacement = ...
+                    displacement - displacement(1);
+
+                if strcmpi(testName,'Tension')
+
+                    [displacement, force] = ...
+                        cropAfterFailure(displacement,force);
+
+                end
+
+                [area, lengthValue, ok] = getDimensions( ...
+                    dims, ...
+                    sectionNumber, ...
+                    testName, ...
+                    materialName, ...
+                    sampleNumber);
+
+                if ~ok
+                    warning( ...
+                        'Skipping file because dimensions are invalid: %s', ...
+                        csvPath);
+                    continue;
+                end
+
+                stress = force ./ area;
+                strain = displacement ./ lengthValue;
+
+                validSS = ...
+                    ~isnan(strain) & ...
+                    ~isnan(stress) & ...
+                    ~isinf(strain) & ...
+                    ~isinf(stress);
+
+                strain = strain(validSS);
+                stress = stress(validSS);
+
+                if isempty(strain) || isempty(stress)
+                    warning( ...
+                        'Stress-strain data empty: %s', ...
+                        csvPath);
+                    continue;
+                end
+
+                if strcmpi(testName,'Compression')
+
+                    keep = ...
+                        strain >= 0 & ...
+                        strain <= plotLimits.compression;
+
+                else
+
+                    keep = ...
+                        strain >= 0 & ...
+                        strain <= plotLimits.tension;
+
+                end
+
+                strain = strain(keep);
+                stress = stress(keep);
+
+                if isempty(strain) || isempty(stress)
+                    warning( ...
+                        'Stress-strain data empty after cropping: %s', ...
+                        csvPath);
+                    continue;
+                end
+
+                %% Plot stress-strain
+                h = plot(strain, stress, ...
+                'Color', colors(colorIndex,:), ...
+                'LineStyle', lineStyle, ...
+                'LineWidth', 1.8);
+
+                h.UserData = csvPath;
+
+            end
+
+            %% ============================================================
+            %% Store every successful curve in the legend
+            %% ============================================================
+
+            labelText = ...
+                upper(string(dayName)) + ...
+                " Sec " + string(sectionNumber) + ...
+                " " + sampleName;
+
+            plotHandles(end+1) = h;
+            legendLabels(end+1) = labelText;
+
+            colorIndex = colorIndex + 1;
+            plotCount = plotCount + 1;
+
+            fprintf( ...
+                'Plotted: %s | legend entry: %s\n', ...
+                csvPath, ...
+                labelText);
+
+        end
+    end
+
+    %% Axis labels
+    if strcmpi(testName,'Compression') || ...
+            strcmpi(testName,'Tension')
+
+        xlabel(ax,'Strain');
+        ylabel(ax,'Stress (MPa)');
+
+    else
+
+        xlabel(ax,'Displacement (mm)');
+        ylabel(ax,'Force (N)');
+
+    end
+
+    title( ...
+        ax, ...
+        string(testName) + ...
+        " - " + string(materialName) + ...
+        " - Monday through Friday");
+
+    if plotCount > 0
+
+        axis(ax,'tight');
+
+        %% Use the explicit handles and labels
+        lgd = legend( ...
+            ax, ...
+            plotHandles, ...
+            cellstr(legendLabels), ...
+            'Location','eastoutside');
+
+        lgd.NumColumns = 3;
+        lgd.FontSize = 6;
+        lgd.Interpreter = 'none';
+        dcm = datacursormode(gcf);
+        set(dcm,'Enable','on','UpdateFcn',@showCSV);
+        fprintf( ...
+            '%s %s legend contains %d entries.\n', ...
+            testName, ...
+            materialName, ...
+            numel(legendLabels));
+
+        %% Verify Friday legend count
+        fridayCount = sum(startsWith(legendLabels,"FRIDAY"));
+
+        fprintf( ...
+            '%s %s Friday legend entries: %d\n', ...
+            testName, ...
+            materialName, ...
+            fridayCount);
+
+    else
+
+        warning( ...
+            'No data plotted for %s %s', ...
+            testName, ...
+            materialName);
+
+    end
+
+    drawnow;
+
+    saveName = ...
+        string(testName) + "_" + ...
+        string(materialName) + ...
+        "_All_Days.png";
+
+    figPath = fullfile(plotFolder,saveName);
+
+    exportgraphics( ...
+        fig, ...
+        figPath, ...
+        'Resolution',300);
+
+    fprintf('Saved plot: %s\n',figPath);
+
+end
+
+%% ========================================================================
+%% Read CSV data as a numeric array
+%% ========================================================================
+
+function data = readCSVNumeric(filePath)
+
+    opts = detectImportOptions(filePath);
+
+    %% Skip header and units rows
+    opts.DataLines = [3 Inf];
+
+    T = readtable(filePath,opts);
+
+    data = NaN(height(T),width(T));
+
+    for c = 1:width(T)
+
+        col = T{:,c};
+
+        if isnumeric(col)
+            data(:,c) = col;
+        else
+            data(:,c) = str2double(string(col));
+        end
+
+    end
+end
+
+%% ========================================================================
+%% Look up specimen dimensions
+%% ========================================================================
+
+function [area, lengthValue, ok] = getDimensions( ...
+    dims, sectionNumber, testName, materialName, sampleNumber)
+
+    ok = true;
+
+    row = dims( ...
+        dims.Section == sectionNumber & ...
+        strcmpi(string(dims.Material),string(materialName)) & ...
+        strcmpi(string(dims.Test),string(testName)) & ...
+        dims.Sample == sampleNumber, ...
+        :);
+
+    if isempty(row)
+
+        warning( ...
+            'Missing dimensions: Section %g, %s, %s, Sample %g', ...
+            sectionNumber, ...
+            materialName, ...
+            testName, ...
+            sampleNumber);
+
+        area = NaN;
+        lengthValue = NaN;
+        ok = false;
+        return;
+    end
+
+    if strcmpi(testName,'Compression')
+
+        diameter = row.Diameter_mm(1);
+        lengthValue = row.Length_mm(1);
+
+        area = pi * (diameter / 2)^2;
+
+    elseif strcmpi(testName,'Tension')
+
+        width = row.Width_mm(1);
+        thickness = row.Thickness_mm(1);
+        lengthValue = row.GaugeLength_mm(1);
+
+        area = width * thickness;
+
+    else
+
+        area = NaN;
+        lengthValue = NaN;
+        ok = false;
+        return;
+
+    end
+
+    if isnan(area) || ...
+            isnan(lengthValue) || ...
+            area <= 0 || ...
+            lengthValue <= 0
+
+        warning( ...
+            'Invalid dimensions: Section %g, %s, %s, Sample %g', ...
+            sectionNumber, ...
+            materialName, ...
+            testName, ...
+            sampleNumber);
+
+        ok = false;
+    end
+end
+
+%% ========================================================================
+%% Crop tension data after failure
+%% ========================================================================
+
+function [displacement, force] = cropAfterFailure( ...
+    displacement, force)
+
+    [peakForce, peakIndex] = max(force);
+
+    if isempty(peakForce) || ...
+            isnan(peakForce) || ...
+            peakForce <= 0
+        return;
+    end
+
+    %% Crop when force falls below 90% of the peak
+    cutoffForce = 0.90 * peakForce;
+
+    dropIndex = find( ...
+        force(peakIndex:end) < cutoffForce, ...
+        1, ...
+        'first');
+
+    if ~isempty(dropIndex)
+
+        lastIndex = peakIndex + dropIndex - 1;
+
+        displacement = displacement(1:lastIndex);
+        force = force(1:lastIndex);
+
+    end
+end 
+%% ------------------------------------------------------------------------
+function txt = showCSV(~,event)
+
+h = get(event,'Target');
+
+csvPath = h.UserData;
+
+fprintf('\n=================================================\n');
+fprintf('CSV File:\n%s\n', csvPath);
+fprintf('=================================================\n\n');
+
+txt = {'CSV File' char(csvPath)};
+
+end
