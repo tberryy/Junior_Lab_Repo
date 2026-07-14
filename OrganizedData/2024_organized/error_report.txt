@@ -1,13 +1,43 @@
 ﻿2024 Data Report
-Generated: 2026-07-13 12:55
-Source:    .\2024raw
+Generated: 2026-07-14 11:29
+Source:    .\raw\2024raw
 Output:    .\2024_organized
 ========================================
 
 CRNs processed by day:
 
+--- batch1 ---
+
+monday: 3 crns
+  10418
+  10428
+  10432
+
 tuesday: 4 crns
   10415
+  10417
+  10422
+  10431
+
+wensday: 3 crns
+  10416
+  10424
+  10425
+
+thursday: 2 crns
+  10419
+  10421
+
+--- batch2 ---
+
+monday: 3 crns
+  10418
+  10428
+  10432
+
+tuesday: 5 crns
+  10415
+  10417
   10422
   10431
   80438
@@ -28,8 +58,7 @@ friday: 2 crns
   104
   10420
 
-Total samples: 14
+Total samples: 30
 
 Sample errors:
-  _unassigned - fracture: UNASSIGNED - loose export folder does not belong to any sample folder
-  old - : UNRECOGNIZED folder name - could not parse day/sample id
+  batch1\FRIDAY - : UNRECOGNIZED folder name - could not parse day/sample id

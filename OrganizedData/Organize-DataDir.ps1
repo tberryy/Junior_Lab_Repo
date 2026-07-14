@@ -96,7 +96,7 @@ $DayMap = @{
 }
 
 # Top-level folder names to silently ignore (not organized, not reported)
-$IgnorePatterns = @('^batch\s*\d*$')
+$IgnorePatterns = @()   # e.g. @('^old$') to silently skip folders
 
 $Expected = @{
     'fracture'    = @{ Min = $ExpectedFractureMin;    Max = $ExpectedFractureMax }
@@ -313,138 +313,171 @@ function New-XlsxReport([object[]]$rows, [string[]]$headers, [string]$path) {
 
 $script:DryRun = [bool]$DryRun
 $reportRows    = New-Object System.Collections.Generic.List[object]
+$crnsByGroup   = @{}   # "batch|day" -> list of CRN ids processed
+$yearVotes     = @{}   # year -> count (detected from test file dates)
 
-$topDirs      = Get-ChildItem -LiteralPath $Source -Directory | Sort-Object Name
-$sampleDirs   = @()
-$looseExports = @()
-$unknownDirs  = @()
-
-foreach ($dir in $topDirs) {
-    $ignored = $false
-    foreach ($pat in $IgnorePatterns) {
-        if ($dir.Name -match $pat) { $ignored = $true; break }
+# Parse "day id" / "id day" / "dayid" style folder names. Returns @{Day=..;Id=..} or $null
+function Parse-SampleName([string]$name) {
+    if ($name -match '^([A-Za-z]+)[ _-]?(\d+)$' -and $DayMap.ContainsKey($Matches[1].ToLower())) {
+        return @{ Day = $DayMap[$Matches[1].ToLower()]; Id = $Matches[2] }
     }
-    if ($ignored) {
-        Write-Host "Ignoring folder: $($dir.Name)" -ForegroundColor DarkGray
-        continue
+    if ($name -match '^(\d+)[ _-]+([A-Za-z]+)$' -and $DayMap.ContainsKey($Matches[2].ToLower())) {
+        return @{ Day = $DayMap[$Matches[2].ToLower()]; Id = $Matches[1] }
     }
-
-    if ($dir.Name -like '*_Exports') {
-        $looseExports += $dir
-    } elseif ($dir.Name -match '^([A-Za-z]+)[ _-]?(\d+)$' -and $DayMap.ContainsKey($Matches[1].ToLower())) {
-        $sampleDirs += $dir
-    } else {
-        $unknownDirs += $dir
-    }
+    return $null
 }
 
-if (-not $sampleDirs -and -not $looseExports) {
-    Write-Host "Nothing to do - no sample folders or export folders found in $Source"
-    return
-}
+# Process one group of sample folders (the source root, or a BATCH folder).
+# $groupLabel is '' for the root, or e.g. 'batch1' - it becomes a subfolder
+# of the destination and a prefix in the reports.
+function Process-Group([string]$groupPath, [string]$groupLabel) {
+    $groupDest = $Destination
+    if ($groupLabel) { $groupDest = Join-Path $Destination $groupLabel }
 
-# --- Organize each sample folder ----------------------------------------------
-$crnsByDay = @{}   # day -> list of CRN ids processed
-$yearVotes = @{}   # year -> count (detected from export folder dates)
+    $dirs         = Get-ChildItem -LiteralPath $groupPath -Directory | Sort-Object Name
+    $sampleDirs   = @()
+    $looseExports = @()
 
-foreach ($sample in $sampleDirs) {
-    $null    = $sample.Name -match '^([A-Za-z]+)[ _-]?(\d+)$'
-    $day     = $DayMap[$Matches[1].ToLower()]
-    $id      = $Matches[2]
-    $newName = "${day}_${id}"
-    $destDir = Join-Path (Join-Path $Destination $day) $newName
-
-    if (-not $crnsByDay.ContainsKey($day)) { $crnsByDay[$day] = New-Object System.Collections.Generic.List[string] }
-    $crnsByDay[$day].Add($id)
-
-    # Detect the year from export/test folder names like TENSION_20260420_...
-    foreach ($item in (Get-ChildItem -LiteralPath $sample.FullName -Recurse -File -ErrorAction SilentlyContinue)) {
-        if ($item.Name -match '_((19|20)\d{2})\d{4}_') {
-            $y = $Matches[1]
-            if ($yearVotes.ContainsKey($y)) { $yearVotes[$y]++ } else { $yearVotes[$y] = 1 }
+    foreach ($dir in $dirs) {
+        # Nested batch folders (only expected at the root)
+        if ($dir.Name -match '^batch[ _-]?(\d+)$') {
+            if ($groupLabel) {
+                Write-Warning "Nested batch folder skipped: $($dir.Name)"
+                continue
+            }
+            $label = "batch$($Matches[1])"
+            Write-Host ""
+            Write-Host "=== $($dir.Name) -> $label ===" -ForegroundColor Green
+            Process-Group $dir.FullName $label
+            continue
         }
-    }
 
-    Write-Host ""
-    Write-Host "Organizing: $($sample.Name)  ->  $day\$newName" -ForegroundColor Cyan
+        $ignored = $false
+        foreach ($pat in $IgnorePatterns) {
+            if ($dir.Name -match $pat) { $ignored = $true; break }
+        }
+        if ($ignored) {
+            Write-Host "Ignoring folder: $($dir.Name)" -ForegroundColor DarkGray
+            continue
+        }
 
-    if (-not $DryRun) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
-
-    # Track how many data CSVs we found per category for this sample
-    $found = @{ 'compression' = 0; 'fracture' = 0; 'tension' = 0 }
-
-    $anyCsvs = Get-ChildItem -LiteralPath $sample.FullName -Recurse -File -Filter '*.csv' -ErrorAction SilentlyContinue
-    if (-not $anyCsvs) {
-        Write-Warning "  No CSV files found anywhere inside $($sample.Name)"
-    } else {
-        $c = Copy-SampleCsvs $sample.FullName $destDir
-        foreach ($k in $c.Keys) { $found[$k] += $c[$k] }
-    }
-
-    # QC check against expected counts (Min-Max range per category)
-    foreach ($cat in @('compression', 'fracture', 'tension')) {
-        $range    = $Expected[$cat]
-        $expLabel = Get-ExpectedLabel $range
-        $got      = $found[$cat]
-        if ($got -lt $range.Min -or $got -gt $range.Max) {
-            if ($got -eq 0 -and -not $anyCsvs)    { $issue = 'NO EXPORTS FOUND - test was never exported from the machine' }
-            elseif ($got -eq 0)                   { $issue = 'MISSING - no data files for this test' }
-            elseif ($got -lt $range.Min)          { $issue = "MISSING $($range.Min - $got) file(s)" }
-            else                                  { $issue = "EXTRA $($got - $range.Max) file(s) - check for duplicate runs" }
-
-            Write-Warning "  ${cat}: found $got, expected $expLabel"
+        if ($dir.Name -like '*_Exports') {
+            $looseExports += $dir
+        } elseif (Parse-SampleName $dir.Name) {
+            $sampleDirs += $dir
+        } else {
+            Write-Warning "Skipped unrecognized folder: $($dir.Name)"
             $reportRows.Add([pscustomobject]@{
-                Day      = $day
-                Sample   = $newName
-                SourceFolder = $sample.Name
-                Category = $cat
-                Expected = $expLabel
-                Found    = $got
-                Issue    = $issue
+                Batch    = $groupLabel
+                Day      = ''
+                Sample   = ''
+                SourceFolder = $dir.Name
+                Category = ''
+                Expected = ''
+                Found    = ''
+                Issue    = 'UNRECOGNIZED folder name - could not parse day/sample id'
             })
         }
     }
-}
 
-# --- Handle loose *_Exports folders at the top level ----------------------------
-foreach ($loose in $looseExports) {
-    Write-Host ""
-    Write-Host "Loose export folder: $($loose.Name)" -ForegroundColor Magenta
+    # --- Organize each sample folder in this group ---
+    foreach ($sample in $sampleDirs) {
+        $parsed  = Parse-SampleName $sample.Name
+        $day     = $parsed.Day
+        $id      = $parsed.Id
+        $newName = "${day}_${id}"
+        $destDir = Join-Path (Join-Path $groupDest $day) $newName
 
-    $owner = $sampleDirs | Where-Object {
-        Test-Path -LiteralPath (Join-Path $_.FullName $loose.Name)
+        $groupKey = "$groupLabel|$day"
+        if (-not $crnsByGroup.ContainsKey($groupKey)) { $crnsByGroup[$groupKey] = New-Object System.Collections.Generic.List[string] }
+        $crnsByGroup[$groupKey].Add($id)
+
+        # Detect the year from test file names like TENSION_20260420_...
+        foreach ($item in (Get-ChildItem -LiteralPath $sample.FullName -Recurse -File -ErrorAction SilentlyContinue)) {
+            if ($item.Name -match '_((19|20)\d{2})\d{4}_') {
+                $y = $Matches[1]
+                if ($yearVotes.ContainsKey($y)) { $yearVotes[$y]++ } else { $yearVotes[$y] = 1 }
+            }
+        }
+
+        $label = $newName
+        if ($groupLabel) { $label = "$groupLabel\$day\$newName" } else { $label = "$day\$newName" }
+        Write-Host ""
+        Write-Host "Organizing: $($sample.Name)  ->  $label" -ForegroundColor Cyan
+
+        if (-not $DryRun) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+
+        $found = @{ 'compression' = 0; 'fracture' = 0; 'tension' = 0 }
+
+        $anyCsvs = Get-ChildItem -LiteralPath $sample.FullName -Recurse -File -Filter '*.csv' -ErrorAction SilentlyContinue
+        if (-not $anyCsvs) {
+            Write-Warning "  No CSV files found anywhere inside $($sample.Name)"
+        } else {
+            $c = Copy-SampleCsvs $sample.FullName $destDir
+            foreach ($k in $c.Keys) { $found[$k] += $c[$k] }
+        }
+
+        # QC check against expected counts (Min-Max range per category)
+        foreach ($cat in @('compression', 'fracture', 'tension')) {
+            $range    = $Expected[$cat]
+            $expLabel = Get-ExpectedLabel $range
+            $got      = $found[$cat]
+            if ($got -lt $range.Min -or $got -gt $range.Max) {
+                if ($got -eq 0 -and -not $anyCsvs)    { $issue = 'NO EXPORTS FOUND - test was never exported from the machine' }
+                elseif ($got -eq 0)                   { $issue = 'MISSING - no data files for this test' }
+                elseif ($got -lt $range.Min)          { $issue = "MISSING $($range.Min - $got) file(s)" }
+                else                                  { $issue = "EXTRA $($got - $range.Max) file(s) - check for duplicate runs" }
+
+                Write-Warning "  ${cat}: found $got, expected $expLabel"
+                $reportRows.Add([pscustomobject]@{
+                    Batch    = $groupLabel
+                    Day      = $day
+                    Sample   = $newName
+                    SourceFolder = $sample.Name
+                    Category = $cat
+                    Expected = $expLabel
+                    Found    = $got
+                    Issue    = $issue
+                })
+            }
+        }
     }
 
-    if ($owner) {
-        Write-Host "  Duplicate of the copy inside $($owner[0].Name) - skipping." -ForegroundColor DarkGray
-        continue
-    }
+    # --- Handle loose *_Exports folders in this group ---
+    foreach ($loose in $looseExports) {
+        Write-Host ""
+        Write-Host "Loose export folder: $($loose.Name)" -ForegroundColor Magenta
 
-    Write-Warning "  No matching sample folder found. Copying to _unassigned\ - please file it manually."
-    $c = Copy-ExportFolder $loose (Join-Path $Destination '_unassigned')
-    $n = 0; foreach ($k in $c.Keys) { $n += $c[$k] }
-    $reportRows.Add([pscustomobject]@{
-        Day      = ''
-        Sample   = '_unassigned'
-        SourceFolder = $loose.Name
-        Category = (Get-Category $loose.Name)
-        Expected = ''
-        Found    = $n
-        Issue    = 'UNASSIGNED - loose export folder does not belong to any sample folder'
-    })
+        $owner = $sampleDirs | Where-Object {
+            Get-ChildItem -LiteralPath $_.FullName -Recurse -Directory -Filter $loose.Name -ErrorAction SilentlyContinue
+        }
+
+        if ($owner) {
+            Write-Host "  Duplicate of the copy inside $($owner[0].Name) - skipping." -ForegroundColor DarkGray
+            continue
+        }
+
+        Write-Warning "  No matching sample folder found. Copying to _unassigned\ - please file it manually."
+        $c = Copy-SampleCsvs $loose.FullName (Join-Path $groupDest '_unassigned')
+        $n = 0; foreach ($k in $c.Keys) { $n += $c[$k] }
+        $reportRows.Add([pscustomobject]@{
+            Batch    = $groupLabel
+            Day      = ''
+            Sample   = '_unassigned'
+            SourceFolder = $loose.Name
+            Category = (Get-Category $loose.Name)
+            Expected = ''
+            Found    = $n
+            Issue    = 'UNASSIGNED - loose export folder does not belong to any sample folder'
+        })
+    }
 }
 
-foreach ($u in $unknownDirs) {
-    Write-Warning "Skipped unrecognized folder: $($u.Name)"
-    $reportRows.Add([pscustomobject]@{
-        Day      = ''
-        Sample   = ''
-        SourceFolder = $u.Name
-        Category = ''
-        Expected = ''
-        Found    = ''
-        Issue    = 'UNRECOGNIZED folder name - could not parse day/sample id'
-    })
+Process-Group $Source ''
+
+if ($reportRows.Count -eq 0 -and $crnsByGroup.Count -eq 0) {
+    Write-Host "Nothing to do - no sample folders, batch folders, or export folders found in $Source"
+    return
 }
 
 # --- Build the text data report -------------------------------------------------
@@ -467,13 +500,18 @@ $lines.Add('CRNs processed by day:')
 $lines.Add('')
 
 $totalCrns = 0
-foreach ($day in $dayOrder) {
-    if (-not $crnsByDay.ContainsKey($day)) { continue }
-    $ids = $crnsByDay[$day] | Sort-Object
-    $totalCrns += $ids.Count
-    $lines.Add("${day}: $($ids.Count) crns")
-    foreach ($id in $ids) { $lines.Add("  $id") }
-    $lines.Add('')
+$groups = @($crnsByGroup.Keys | ForEach-Object { ($_ -split '\|')[0] } | Sort-Object -Unique)
+foreach ($group in $groups) {
+    if ($group) { $lines.Add("--- $group ---"); $lines.Add('') }
+    foreach ($day in $dayOrder) {
+        $key = "$group|$day"
+        if (-not $crnsByGroup.ContainsKey($key)) { continue }
+        $ids = $crnsByGroup[$key] | Sort-Object
+        $totalCrns += $ids.Count
+        $lines.Add("${day}: $($ids.Count) crns")
+        foreach ($id in $ids) { $lines.Add("  $id") }
+        $lines.Add('')
+    }
 }
 
 $lines.Add("Total samples: $totalCrns")
@@ -487,6 +525,7 @@ if ($errorRows.Count -eq 0) {
     foreach ($row in $errorRows) {
         $who = $row.Sample
         if (-not $who) { $who = $row.SourceFolder }
+        if ($row.Batch) { $who = "$($row.Batch)\$who" }
         $detail = ''
         if ("$($row.Expected)" -ne '') { $detail = " (found $($row.Found), expected $($row.Expected))" }
         $lines.Add("  ${who} - $($row.Category): $($row.Issue)$detail")
@@ -507,11 +546,11 @@ if (-not $DryRun) {
 }
 
 # --- Write the Excel error report ------------------------------------------------
-$headers = @('Day', 'Sample', 'SourceFolder', 'Category', 'Expected', 'Found', 'Issue')
+$headers = @('Batch', 'Day', 'Sample', 'SourceFolder', 'Category', 'Expected', 'Found', 'Issue')
 
 if ($reportRows.Count -eq 0) {
     $reportRows.Add([pscustomobject]@{
-        Day = ''; Sample = ''; SourceFolder = ''; Category = ''
+        Batch = ''; Day = ''; Sample = ''; SourceFolder = ''; Category = ''
         Expected = ''; Found = ''; Issue = 'No errors - all samples had the expected number of files'
     })
 }
