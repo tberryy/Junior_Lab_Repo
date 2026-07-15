@@ -194,7 +194,51 @@ for b = 1:length(batchFolders)
                 yearResults = [yearResults; temp];
             end
 
-        end     
+        end
+   
+
+                %% Compression: highest force is CNT
+                if isfolder(compressionFolder)
+
+                    temp = classifyByMaxForce( ...
+                        compressionFolder, ...
+                        1, ...
+                        yearName, ...
+                        dayName, ...
+                        groupName, ...
+                        "Compression");
+
+                    yearResults = [yearResults; temp];
+                end
+
+                %% Tension: highest force is CNT
+                if isfolder(tensionFolder)
+
+                    temp = classifyByMaxForce( ...
+                        tensionFolder, ...
+                        1, ...
+                        yearName, ...
+                        dayName, ...
+                        groupName, ...
+                        "Tension");
+
+                    yearResults = [yearResults; temp];
+                end
+
+                %% Fracture: highest four forces are CNT
+                if isfolder(fractureFolder)
+
+                    temp = classifyByMaxForce( ...
+                        fractureFolder, ...
+                        4, ...
+                        yearName, ...
+                        dayName, ...
+                        groupName, ...
+                        "Fracture");
+
+                    yearResults = [yearResults; temp];
+                end
+
             end
         end
 
@@ -717,7 +761,6 @@ end
 %% ========================================================================
 
 function data = readCSVNumeric(filePath)
-    fprintf('Reading: %s\n', filePath);
 
     opts = detectImportOptions(filePath);
 
@@ -745,26 +788,17 @@ end
 %% Look up specimen dimensions
 %% ========================================================================
 
-function [area,lengthValue,ok] = getDimensions( ...
-    dims,sectionNumber,testName,materialName,sampleNumber)
+function [area, lengthValue, ok] = getDimensions( ...
+    dims, sectionNumber, testName, materialName, sampleNumber)
 
     ok = true;
 
-    %% Convert table columns safely
-    sectionValues = str2double(string(dims.Section));
-    sampleValues  = str2double(string(dims.Sample));
-
-    materialValues = strtrim(string(dims.Material));
-    testValues     = strtrim(string(dims.Test));
-
-    %% Find matching row
-    matchingRows = ...
-        sectionValues == sectionNumber & ...
-        strcmpi(materialValues,string(materialName)) & ...
-        strcmpi(testValues,string(testName)) & ...
-        sampleValues == sampleNumber;
-
-    row = dims(matchingRows,:);
+    row = dims( ...
+        dims.Section == sectionNumber & ...
+        strcmpi(string(dims.Material),string(materialName)) & ...
+        strcmpi(string(dims.Test),string(testName)) & ...
+        dims.Sample == sampleNumber, ...
+        :);
 
     if isempty(row)
 
@@ -781,20 +815,18 @@ function [area,lengthValue,ok] = getDimensions( ...
         return;
     end
 
-    %% Compression specimen
     if strcmpi(testName,'Compression')
 
-        diameter = str2double(string(row.Diameter_mm(1)));
-        lengthValue = str2double(string(row.Length_mm(1)));
+        diameter = row.Diameter_mm(1);
+        lengthValue = row.Length_mm(1);
 
         area = pi * (diameter / 2)^2;
 
-    %% Tension specimen
     elseif strcmpi(testName,'Tension')
 
-        width = str2double(string(row.Width_mm(1)));
-        thickness = str2double(string(row.Thickness_mm(1)));
-        lengthValue = str2double(string(row.GaugeLength_mm(1)));
+        width = row.Width_mm(1);
+        thickness = row.Thickness_mm(1);
+        lengthValue = row.GaugeLength_mm(1);
 
         area = width * thickness;
 
@@ -807,7 +839,6 @@ function [area,lengthValue,ok] = getDimensions( ...
 
     end
 
-    %% Validate dimensions
     if isnan(area) || ...
             isnan(lengthValue) || ...
             area <= 0 || ...
