@@ -459,12 +459,45 @@ function plotCombinedDays( ...
                 displacement = displacement(startIndex:end);
                 force = force(startIndex:end);
 
-                %% Shift curve to origin
-                displacement = displacement - displacement(1);
-                force = force - force(1);
+%% Smooth force before calculating slope
+smoothWindow = 25;
 
-                displacement(displacement < 0) = 0;
-                force(force < 0) = 0;
+forceSmooth = movmean(force, smoothWindow);
+
+%% Calculate loading slope in N/mm
+dFdx = gradient(forceSmooth, displacement);
+
+%% Adjustable settings
+slopeThreshold = 50;    % N/mm
+requiredPoints = 15;    % consecutive points above threshold
+
+%% Require a sustained positive slope
+isLoading = dFdx >= slopeThreshold;
+
+sustainedLoading = movsum(isLoading, requiredPoints) >= requiredPoints;
+
+startIndex = find(sustainedLoading, 1, 'first');
+
+if isempty(startIndex)
+    warning('Could not detect loading start. Using first data point.');
+    startIndex = 1;
+end
+
+%% Start slightly before detected loading
+paddingPoints = 3;
+startIndex = max(1, startIndex - paddingPoints);
+
+%% Remove initial flat section
+displacement = displacement(startIndex:end);
+force = force(startIndex:end);
+
+%% Shift curve to origin
+displacement = displacement - displacement(1);
+force = force - force(1);
+
+%% Remove small negative values caused by noise
+displacement(displacement < 0) = 0;
+force(force < 0) = 0;
 
                 %% Find shifted peak
                 [peakForceShifted, peakIndex] = max(force);
