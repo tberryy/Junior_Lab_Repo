@@ -26,7 +26,45 @@ classifiedAll = classifyAllSpecimens(organizedFolder, days);
 if isempty(classifiedAll)
     error('No specimens were classified. Check the OrganizedData folder.');
 end
+%% ==========================================================
+%% Create six yearly-average comparison graphs
+%% ==========================================================
 
+averagePlotFolder = fullfile(organizedFolder, ...
+    'Yearly_Average_Comparison_Plots');
+
+if ~isfolder(averagePlotFolder)
+    mkdir(averagePlotFolder);
+end
+
+plotYearlyAverageCurves( ...
+    classifiedAll, ...
+    organizedFolder, ...
+    materials, ...
+    tests, ...
+    plotLimits, ...
+    averagePlotFolder);
+%% ==========================================================
+%% Create separate mean ± standard deviation graphs
+%% ==========================================================
+
+standardDeviationPlotFolder = fullfile( ...
+    organizedFolder, ...
+    'Year_Test_Standard_Deviation_Plots');
+
+if ~isfolder(standardDeviationPlotFolder)
+    mkdir(standardDeviationPlotFolder);
+end
+
+plotYearTestStandardDeviationCurves( ...
+    classifiedAll, ...
+    organizedFolder, ...
+    materials, ...
+    tests, ...
+    plotLimits, ...
+    standardDeviationPlotFolder);
+
+%{
 %% Plot each organized year
 years = unique(classifiedAll.Year);
 
@@ -80,6 +118,7 @@ for y = 1:length(years)
 end
 
 fprintf('\nFinished creating plots.\n');
+%}
 
 %% ========================================================================
 %% Classify all organized folders
@@ -549,6 +588,11 @@ force(force < 0) = 0;
                         csvPath);
                     continue;
                 end
+                %% Keep data only up to the maximum force
+                [~, peakIndex] = max(force);
+
+                displacement = displacement(1:peakIndex);
+                force = force(1:peakIndex);
 
                 %% Plot fracture
               h = plot(displacement, force, ...
@@ -630,6 +674,11 @@ force(force < 0) = 0;
                         csvPath);
                     continue;
                 end
+                %% Keep data only up to the maximum stress
+                [~, peakIndex] = max(stress);
+
+                strain = strain(1:peakIndex);
+                stress = stress(1:peakIndex);
 
                 %% Plot stress-strain
                 h = plot(strain, stress, ...
@@ -889,6 +938,900 @@ function [displacement, force] = cropAfterFailure( ...
 
     end
 end 
+%% ========================================================================
+%% Plot average curves for 2023, 2024, 2025, and 2026
+%% ========================================================================
+
+function plotYearlyAverageCurves( ...
+    classifiedAll, organizedFolder, materials, tests, ...
+    plotLimits, outputFolder)
+
+    yearsToPlot = ["2023","2024","2025","2026"];
+
+    % Number of interpolation points used for every average curve
+    numberOfAveragePoints = 500;
+
+    for t = 1:length(tests)
+
+        testName = string(tests{t});
+
+        for m = 1:length(materials)
+
+            materialName = string(materials{m});
+
+            fig = figure( ...
+                'Visible','on', ...
+                'Units','normalized', ...
+                'Position',[0.10 0.10 0.75 0.75]);
+
+            ax = axes(fig);
+
+            hold(ax,'on');
+            grid(ax,'on');
+            box(ax,'on');
+
+            plottedYears = strings(0);
+            plotHandles = gobjects(0);
+
+            for y = 1:length(yearsToPlot)
+
+                yearNumber = yearsToPlot(y);
+                yearFolderName = yearNumber + "_organized";
+
+                %% Select this year, material, and test
+                rows = ...
+                    strcmpi(string(classifiedAll.Year), ...
+                            yearFolderName) & ...
+                    strcmpi(string(classifiedAll.Test), ...
+                            testName) & ...
+                    strcmpi(string(classifiedAll.Material), ...
+                            materialName);
+
+                selected = classifiedAll(rows,:);
+
+                fprintf( ...
+                    '\nAverage processing: %s %s %s — %d files\n', ...
+                    yearNumber, ...
+                    materialName, ...
+                    testName, ...
+                    height(selected));
+
+                if isempty(selected)
+                    warning( ...
+                        'No files found for %s %s %s.', ...
+                        yearNumber, materialName, testName);
+                    continue;
+                end
+
+                %% Read the dimension file for this year
+                dims = table();
+
+                if ~strcmpi(testName,'Fracture')
+
+                    dimensionFile = fullfile( ...
+                        organizedFolder, ...
+                        yearFolderName, ...
+                        "SpecimenDimensions" + yearNumber + ".xlsx");
+
+                    if ~isfile(dimensionFile)
+                        warning( ...
+                            'Dimension file not found: %s', ...
+                            dimensionFile);
+                        continue;
+                    end
+
+                    dims = readtable(dimensionFile);
+
+                    if ~ismember( ...
+                            'Material', ...
+                            dims.Properties.VariableNames)
+
+                        dims.Properties.VariableNames{2} = ...
+                            'Material';
+                    end
+                end
+
+                %% Store every successfully processed curve
+                xCurves = cell(0);
+                yCurves = cell(0);
+
+                for i = 1:height(selected)
+
+                    csvPath = string(selected.FilePath(i));
+
+                    if ~isfile(csvPath)
+                        warning('CSV not found: %s', csvPath);
+                        continue;
+                    end
+
+                    groupName = string(selected.Group(i));
+
+                    sectionNumber = str2double( ...
+                        regexprep(groupName,'\D',''));
+
+                    sampleName = string(selected.SampleName(i));
+
+                    sampleNumber = str2double( ...
+                        regexprep(sampleName,'\D',''));
+
+                    [xCurve, yCurve, ok] = ...
+                        processCurveForYearlyAverage( ...
+                            csvPath, ...
+                            dims, ...
+                            sectionNumber, ...
+                            sampleNumber, ...
+                            testName, ...
+                            materialName, ...
+                            plotLimits);
+
+                    if ~ok
+                        continue;
+                    end
+
+                    xCurves{end+1,1} = xCurve;
+                    yCurves{end+1,1} = yCurve;
+                end
+
+                if isempty(xCurves)
+                    warning( ...
+                        'No valid curves for %s %s %s.', ...
+                        yearNumber, materialName, testName);
+                    continue;
+                end
+
+                %% Find range shared by all curves
+                curveStarts = cellfun(@(x) min(x), xCurves);
+                curveEnds = cellfun(@(x) max(x), xCurves);
+
+                commonStart = max(curveStarts);
+                commonEnd = min(curveEnds);
+
+                if commonEnd <= commonStart
+                    warning( ...
+                        ['The curves do not have a common x range for ' ...
+                         '%s %s %s.'], ...
+                        yearNumber, materialName, testName);
+                    continue;
+                end
+
+                %% Common x-axis for interpolation
+                commonX = linspace( ...
+                    commonStart, ...
+                    commonEnd, ...
+                    numberOfAveragePoints)';
+
+                interpolatedY = NaN( ...
+                    numberOfAveragePoints, ...
+                    length(xCurves));
+
+                %% Interpolate every specimen onto commonX
+                for c = 1:length(xCurves)
+
+                    xCurrent = xCurves{c};
+                    yCurrent = yCurves{c};
+
+                    [xCurrent, uniqueIndices] = ...
+                        unique(xCurrent,'stable');
+
+                    yCurrent = yCurrent(uniqueIndices);
+
+                    if length(xCurrent) < 2
+                        continue;
+                    end
+
+                    interpolatedY(:,c) = interp1( ...
+                        xCurrent, ...
+                        yCurrent, ...
+                        commonX, ...
+                        'linear', ...
+                        NaN);
+                end
+
+                %% Remove failed interpolation columns
+                validColumns = ...
+                    sum(isfinite(interpolatedY),1) >= 2;
+
+                interpolatedY = ...
+                    interpolatedY(:,validColumns);
+
+                if isempty(interpolatedY)
+                    warning( ...
+                        'Interpolation failed for %s %s %s.', ...
+                        yearNumber, materialName, testName);
+                    continue;
+                end
+
+                %% Point-by-point average
+                averageY = mean( ...
+                    interpolatedY, ...
+                    2, ...
+                    'omitnan');
+
+                %% Plot this year's average
+                h = plot( ...
+                    ax, ...
+                    commonX, ...
+                    averageY, ...
+                    'LineWidth',2.5);
+
+                plotHandles(end+1) = h;
+
+                plottedYears(end+1) = ...
+                    yearNumber + ...
+                    " average (n = " + ...
+                    string(size(interpolatedY,2)) + ")";
+
+                fprintf( ...
+                    'Plotted %s average using %d curves.\n', ...
+                    yearNumber, ...
+                    size(interpolatedY,2));
+            end
+
+            %% Labels
+            if strcmpi(testName,'Fracture')
+
+                xlabel(ax,'Displacement (mm)');
+                ylabel(ax,'Force (N)');
+
+            else
+
+                xlabel(ax,'Strain');
+                ylabel(ax,'Stress (MPa)');
+
+            end
+
+            title( ...
+                ax, ...
+                materialName + " " + testName + ...
+                " — Yearly Average Curves");
+
+            if ~isempty(plotHandles)
+
+                legend( ...
+                    ax, ...
+                    plotHandles, ...
+                    cellstr(plottedYears), ...
+                    'Location','best', ...
+                    'Interpreter','none');
+
+                axis(ax,'tight');
+
+            else
+
+                warning( ...
+                    'No yearly averages were plotted for %s %s.', ...
+                    materialName, testName);
+            end
+
+            %% Save graph
+            saveName = ...
+                materialName + "_" + testName + ...
+                "_Yearly_Averages.png";
+
+            savePath = fullfile(outputFolder,saveName);
+
+            exportgraphics( ...
+                fig, ...
+                savePath, ...
+                'Resolution',300);
+
+            fprintf('Saved average plot: %s\n',savePath);
+        end
+    end
+end
+%% ========================================================================
+%% Plot separate mean ± standard deviation graph for every year,
+%% material, and test
+%% ========================================================================
+
+function plotYearTestStandardDeviationCurves( ...
+    classifiedAll, organizedFolder, materials, tests, ...
+    plotLimits, outputFolder)
+
+    yearsToPlot = ["2023","2024","2025","2026"];
+
+    numberOfAveragePoints = 500;
+
+    for y = 1:length(yearsToPlot)
+
+        yearNumber = yearsToPlot(y);
+        yearFolderName = yearNumber + "_organized";
+
+        for t = 1:length(tests)
+
+            testName = string(tests{t});
+
+            for m = 1:length(materials)
+
+                materialName = string(materials{m});
+
+                fprintf( ...
+                    '\nMean and standard deviation: %s %s %s\n', ...
+                    yearNumber, materialName, testName);
+
+                %% Select files for one year, material, and test
+                rows = ...
+                    strcmpi( ...
+                        strtrim(string(classifiedAll.Year)), ...
+                        yearFolderName) & ...
+                    strcmpi( ...
+                        strtrim(string(classifiedAll.Test)), ...
+                        testName) & ...
+                    strcmpi( ...
+                        strtrim(string(classifiedAll.Material)), ...
+                        materialName);
+
+                selected = classifiedAll(rows,:);
+
+                if isempty(selected)
+
+                    warning( ...
+                        'No files found for %s %s %s.', ...
+                        yearNumber, materialName, testName);
+
+                    continue;
+                end
+
+                %% Read dimension file for compression and tension
+                dims = table();
+
+                if ~strcmpi(testName,'Fracture')
+
+                    dimensionFile = fullfile( ...
+                        organizedFolder, ...
+                        yearFolderName, ...
+                        "SpecimenDimensions" + ...
+                        yearNumber + ".xlsx");
+
+                    if ~isfile(dimensionFile)
+
+                        warning( ...
+                            'Dimension file not found: %s', ...
+                            dimensionFile);
+
+                        continue;
+                    end
+
+                    dims = readtable(dimensionFile);
+
+                    if ~ismember( ...
+                            'Material', ...
+                            dims.Properties.VariableNames)
+
+                        dims.Properties.VariableNames{2} = ...
+                            'Material';
+                    end
+                end
+
+                %% Process and store individual specimen curves
+                xCurves = {};
+                yCurves = {};
+
+                for i = 1:height(selected)
+
+                    csvPath = string(selected.FilePath(i));
+
+                    if ~isfile(csvPath)
+
+                        warning( ...
+                            'CSV not found: %s', ...
+                            csvPath);
+
+                        continue;
+                    end
+
+                    groupName = string(selected.Group(i));
+
+                    sectionNumber = str2double( ...
+                        regexprep(groupName,'\D',''));
+
+                    sampleName = string(selected.SampleName(i));
+
+                    sampleNumber = str2double( ...
+                        regexprep(sampleName,'\D',''));
+
+                    [xCurve, yCurve, ok] = ...
+                        processCurveForYearlyAverage( ...
+                            csvPath, ...
+                            dims, ...
+                            sectionNumber, ...
+                            sampleNumber, ...
+                            testName, ...
+                            materialName, ...
+                            plotLimits);
+
+                    if ~ok || ...
+                            length(xCurve) < 2 || ...
+                            length(yCurve) < 2
+                        continue;
+                    end
+
+                    xCurves{end+1,1} = xCurve(:);
+                    yCurves{end+1,1} = yCurve(:);
+                end
+
+                numberOfCurves = length(xCurves);
+
+                if numberOfCurves == 0
+
+                    warning( ...
+                        'No valid curves for %s %s %s.', ...
+                        yearNumber, materialName, testName);
+
+                    continue;
+                end
+
+                %% Determine interpolation domain
+                curveStarts = cellfun( ...
+                    @(x) min(x), xCurves);
+
+                curveEnds = cellfun( ...
+                    @(x) max(x), xCurves);
+
+                if strcmpi(testName,'Compression')
+
+                    % Keep the full compression response.
+                    commonStart = 0;
+
+                    commonEnd = min( ...
+                        max(curveEnds), ...
+                        plotLimits.compression);
+
+                else
+
+                    % Tension and fracture use a range shared by
+                    % all valid specimens.
+                    commonStart = max(curveStarts);
+                    commonEnd = min(curveEnds);
+                end
+
+                if ~isfinite(commonStart) || ...
+                        ~isfinite(commonEnd) || ...
+                        commonEnd <= commonStart
+
+                    warning( ...
+                        ['Invalid interpolation range for ' ...
+                         '%s %s %s.'], ...
+                        yearNumber, materialName, testName);
+
+                    continue;
+                end
+
+                commonX = linspace( ...
+                    commonStart, ...
+                    commonEnd, ...
+                    numberOfAveragePoints)';
+
+                interpolatedY = NaN( ...
+                    numberOfAveragePoints, ...
+                    numberOfCurves);
+
+                %% Interpolate specimens onto the common x-axis
+                for c = 1:numberOfCurves
+
+                    xCurrent = xCurves{c};
+                    yCurrent = yCurves{c};
+
+                    validCurrent = ...
+                        isfinite(xCurrent) & ...
+                        isfinite(yCurrent);
+
+                    xCurrent = xCurrent(validCurrent);
+                    yCurrent = yCurrent(validCurrent);
+
+                    [xCurrent, sortIndex] = sort(xCurrent);
+                    yCurrent = yCurrent(sortIndex);
+
+                    [xCurrent, uniqueIndex] = ...
+                        unique(xCurrent,'stable');
+
+                    yCurrent = yCurrent(uniqueIndex);
+
+                    if length(xCurrent) < 2
+                        continue;
+                    end
+
+                    interpolatedY(:,c) = interp1( ...
+                        xCurrent, ...
+                        yCurrent, ...
+                        commonX, ...
+                        'linear', ...
+                        NaN);
+                end
+
+                %% Remove curves whose interpolation completely failed
+                validColumns = ...
+                    sum(isfinite(interpolatedY),1) >= 2;
+
+                interpolatedY = ...
+                    interpolatedY(:,validColumns);
+
+                numberIncluded = size(interpolatedY,2);
+
+                if numberIncluded == 0
+
+                    warning( ...
+                        ['Interpolation failed for every curve: ' ...
+                         '%s %s %s.'], ...
+                        yearNumber, materialName, testName);
+
+                    continue;
+                end
+
+                %% Number of curves contributing at each x-location
+                contributingCount = ...
+                    sum(isfinite(interpolatedY),2);
+
+                %% Point-by-point average and standard deviation
+                averageY = mean( ...
+                    interpolatedY, ...
+                    2, ...
+                    'omitnan');
+
+                standardDeviationY = std( ...
+                    interpolatedY, ...
+                    0, ...
+                    2, ...
+                    'omitnan');
+
+                %% Standard deviation is undefined with only one curve
+                standardDeviationY( ...
+                    contributingCount < 2) = NaN;
+
+                %% Remove points with no valid average
+                validAverage = ...
+                    isfinite(commonX) & ...
+                    isfinite(averageY);
+
+                commonX = commonX(validAverage);
+                averageY = averageY(validAverage);
+                standardDeviationY = ...
+                    standardDeviationY(validAverage);
+
+                contributingCount = ...
+                    contributingCount(validAverage);
+
+                if isempty(commonX)
+                    continue;
+                end
+
+                %% Cut final fracture average at its maximum
+                if strcmpi(testName,'Fracture')
+
+                    [~, averagePeakIndex] = max(averageY);
+
+                    commonX = commonX(1:averagePeakIndex);
+                    averageY = averageY(1:averagePeakIndex);
+
+                    standardDeviationY = ...
+                        standardDeviationY(1:averagePeakIndex);
+
+                    contributingCount = ...
+                        contributingCount(1:averagePeakIndex);
+                end
+
+                %% Upper and lower standard-deviation boundaries
+                lowerBound = ...
+                    averageY - standardDeviationY;
+
+                upperBound = ...
+                    averageY + standardDeviationY;
+
+                % Force and stress should not be below zero
+                lowerBound(lowerBound < 0) = 0;
+
+                %% Only shade points where standard deviation exists
+                shadeValid = ...
+                    isfinite(commonX) & ...
+                    isfinite(lowerBound) & ...
+                    isfinite(upperBound);
+
+                xShade = commonX(shadeValid);
+                lowerShade = lowerBound(shadeValid);
+                upperShade = upperBound(shadeValid);
+
+                %% Create figure
+                fig = figure( ...
+                    'Visible','on', ...
+                    'Units','normalized', ...
+                    'Position',[0.12 0.10 0.72 0.76]);
+
+                ax = axes(fig);
+
+                hold(ax,'on');
+                grid(ax,'on');
+                box(ax,'on');
+
+                %% Draw shaded standard-deviation region
+                if length(xShade) >= 2
+
+                    shadeHandle = fill( ...
+                        ax, ...
+                        [xShade; flipud(xShade)], ...
+                        [lowerShade; flipud(upperShade)], ...
+                        [0.5 0.5 0.5], ...
+                        'FaceAlpha',0.25, ...
+                        'EdgeColor','none', ...
+                        'DisplayName','Mean \pm 1 standard deviation');
+
+                else
+
+                    shadeHandle = gobjects(0);
+                end
+
+                %% Draw average curve over the shaded region
+                meanHandle = plot( ...
+                    ax, ...
+                    commonX, ...
+                    averageY, ...
+                    'LineWidth',2.5, ...
+                    'DisplayName', ...
+                    sprintf( ...
+                        'Average curve (n = %d)', ...
+                        numberIncluded));
+
+                %% Labels
+                if strcmpi(testName,'Fracture')
+
+                    xlabel(ax,'Displacement (mm)');
+                    ylabel(ax,'Force (N)');
+
+                else
+
+                    xlabel(ax,'Strain');
+                    ylabel(ax,'Stress (MPa)');
+                end
+
+                title( ...
+                    ax, ...
+                    yearNumber + " " + ...
+                    materialName + " " + ...
+                    testName + ...
+                    " — Mean \pm Standard Deviation");
+
+                if isempty(shadeHandle)
+
+                    legend( ...
+                        ax, ...
+                        meanHandle, ...
+                        'Location','best', ...
+                        'Interpreter','tex');
+
+                else
+
+                    legend( ...
+                        ax, ...
+                        [meanHandle, shadeHandle], ...
+                        'Location','best', ...
+                        'Interpreter','tex');
+                end
+
+                axis(ax,'tight');
+
+                %% Add minimum contributor information
+                positiveCounts = ...
+                    contributingCount(contributingCount > 0);
+
+                if ~isempty(positiveCounts)
+
+                    minimumContributors = min(positiveCounts);
+
+                    subtitle( ...
+                        ax, ...
+                        sprintf( ...
+                            ['Curves included: %d; minimum curves ' ...
+                             'contributing at any plotted point: %d'], ...
+                            numberIncluded, ...
+                            minimumContributors));
+                end
+
+                %% Save graph
+                saveName = ...
+                    yearNumber + "_" + ...
+                    materialName + "_" + ...
+                    testName + ...
+                    "_Mean_StdDev.png";
+
+                savePath = fullfile( ...
+                    outputFolder, ...
+                    saveName);
+
+                exportgraphics( ...
+                    fig, ...
+                    savePath, ...
+                    'Resolution',300);
+
+                fprintf( ...
+                    ['Saved mean and standard-deviation plot ' ...
+                     'using %d curves:\n%s\n'], ...
+                    numberIncluded, ...
+                    savePath);
+            end
+        end
+    end
+end
+%% ========================================================================
+%% Process one specimen for the yearly average
+%% ========================================================================
+
+function [xCurve, yCurve, ok] = ...
+    processCurveForYearlyAverage( ...
+        csvPath, dims, sectionNumber, sampleNumber, ...
+        testName, materialName, plotLimits)
+
+    xCurve = [];
+    yCurve = [];
+    ok = false;
+
+    data = readCSVNumeric(csvPath);
+
+    if size(data,2) < 3
+        warning( ...
+            'CSV has fewer than three columns: %s', ...
+            csvPath);
+        return;
+    end
+
+    displacement = data(:,2);
+    force = data(:,3);
+
+    valid = ...
+        isfinite(displacement) & ...
+        isfinite(force);
+
+    displacement = displacement(valid);
+    force = force(valid);
+
+    if length(displacement) < 3
+        return;
+    end
+
+    %% Remove duplicate displacement values
+    [displacement, uniqueIndices] = ...
+        unique(displacement,'stable');
+
+    force = force(uniqueIndices);
+
+    %% ====================================================================
+    %% Fracture
+    %% ====================================================================
+
+    if strcmpi(testName,'Fracture')
+
+        peakForceOriginal = max(force);
+
+        if ~isfinite(peakForceOriginal) || ...
+                peakForceOriginal <= 0
+            return;
+        end
+
+        %% Find beginning of loading
+        startThreshold = 0.05 * peakForceOriginal;
+
+        startIndex = find( ...
+            force >= startThreshold, ...
+            1, ...
+            'first');
+
+        if isempty(startIndex)
+            return;
+        end
+
+        displacement = displacement(startIndex:end);
+        force = force(startIndex:end);
+
+        %% Shift to origin
+        displacement = displacement - displacement(1);
+        force = force - force(1);
+
+        displacement(displacement < 0) = 0;
+        force(force < 0) = 0;
+
+%% Cut each fracture specimen at maximum force
+[~, peakIndex] = max(force);
+
+displacement = displacement(1:peakIndex);
+force = force(1:peakIndex);
+
+
+        %% Apply plotting limit
+        keep = ...
+            displacement >= 0 & ...
+            displacement <= plotLimits.fracture;
+
+        displacement = displacement(keep);
+        force = force(keep);
+
+        if length(displacement) < 2
+            return;
+        end
+
+        xCurve = displacement;
+        yCurve = force; 
+        ok = true;
+        return;
+    end
+
+    %% ====================================================================
+    %% Compression and tension
+    %% ====================================================================
+
+    displacement = displacement - displacement(1);
+
+    if strcmpi(testName,'Tension')
+        [displacement, force] = ...
+            cropAfterFailure(displacement,force);
+    end
+
+    [area, lengthValue, dimensionsOK] = ...
+        getDimensions( ...
+            dims, ...
+            sectionNumber, ...
+            testName, ...
+            materialName, ...
+            sampleNumber);
+
+    if ~dimensionsOK
+        return;
+    end
+
+    stress = force ./ area;
+    strain = displacement ./ lengthValue;
+
+    valid = isfinite(strain) & isfinite(stress);
+
+    strain = strain(valid);
+    stress = stress(valid);
+
+    if length(strain) < 3
+        return;
+    end
+
+    %% Shift stress so the curve starts at zero
+    stress = stress - stress(1);
+
+    strain(strain < 0) = 0;
+    stress(stress < 0) = 0;
+
+    %% Apply test-specific limit
+    if strcmpi(testName,'Compression')
+
+        keep = ...
+            strain >= 0 & ...
+            strain <= plotLimits.compression;
+
+    else
+
+        keep = ...
+            strain >= 0 & ...
+            strain <= plotLimits.tension;
+    end
+
+    strain = strain(keep);
+    stress = stress(keep);
+
+    if length(strain) < 3
+        return;
+    end
+
+    %% Cut tension at its maximum, but keep the full compression curve
+if strcmpi(testName,'Tension')
+
+    [~, peakIndex] = max(stress);
+
+    strain = strain(1:peakIndex);
+    stress = stress(1:peakIndex);
+
+end
+
+    if length(strain) < 2
+        return;
+    end
+
+    xCurve = strain;
+    yCurve = stress;
+    ok = true;
+end
 %% ------------------------------------------------------------------------
 function txt = showCSV(~,event)
 

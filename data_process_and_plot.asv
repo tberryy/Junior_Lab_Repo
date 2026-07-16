@@ -27,7 +27,7 @@ if isempty(classifiedAll)
     error('No specimens were classified. Check the OrganizedData folder.');
 end
 
-%% Plot each organized year
+%{%% Plot each organized year
 years = unique(classifiedAll.Year);
 
 for y = 1:length(years)
@@ -79,7 +79,7 @@ for y = 1:length(years)
     end
 end
 
-fprintf('\nFinished creating plots.\n');
+fprintf('\nFinished creating plots.\n'); %}
 
 %% ========================================================================
 %% Classify all organized folders
@@ -194,51 +194,7 @@ for b = 1:length(batchFolders)
                 yearResults = [yearResults; temp];
             end
 
-        end
-   
-
-                %% Compression: highest force is CNT
-                if isfolder(compressionFolder)
-
-                    temp = classifyByMaxForce( ...
-                        compressionFolder, ...
-                        1, ...
-                        yearName, ...
-                        dayName, ...
-                        groupName, ...
-                        "Compression");
-
-                    yearResults = [yearResults; temp];
-                end
-
-                %% Tension: highest force is CNT
-                if isfolder(tensionFolder)
-
-                    temp = classifyByMaxForce( ...
-                        tensionFolder, ...
-                        1, ...
-                        yearName, ...
-                        dayName, ...
-                        groupName, ...
-                        "Tension");
-
-                    yearResults = [yearResults; temp];
-                end
-
-                %% Fracture: highest four forces are CNT
-                if isfolder(fractureFolder)
-
-                    temp = classifyByMaxForce( ...
-                        fractureFolder, ...
-                        4, ...
-                        yearName, ...
-                        dayName, ...
-                        groupName, ...
-                        "Fracture");
-
-                    yearResults = [yearResults; temp];
-                end
-
+        end     
             end
         end
 
@@ -503,12 +459,45 @@ function plotCombinedDays( ...
                 displacement = displacement(startIndex:end);
                 force = force(startIndex:end);
 
-                %% Shift curve to origin
-                displacement = displacement - displacement(1);
-                force = force - force(1);
+%% Smooth force before calculating slope
+smoothWindow = 25;
 
-                displacement(displacement < 0) = 0;
-                force(force < 0) = 0;
+forceSmooth = movmean(force, smoothWindow);
+
+%% Calculate loading slope in N/mm
+dFdx = gradient(forceSmooth, displacement);
+
+%% Adjustable settings
+slopeThreshold = 50;    % N/mm
+requiredPoints = 15;    % consecutive points above threshold
+
+%% Require a sustained positive slope
+isLoading = dFdx >= slopeThreshold;
+
+sustainedLoading = movsum(isLoading, requiredPoints) >= requiredPoints;
+
+startIndex = find(sustainedLoading, 1, 'first');
+
+if isempty(startIndex)
+    warning('Could not detect loading start. Using first data point.');
+    startIndex = 1;
+end
+
+%% Start slightly before detected loading
+paddingPoints = 3;
+startIndex = max(1, startIndex - paddingPoints);
+
+%% Remove initial flat section
+displacement = displacement(startIndex:end);
+force = force(startIndex:end);
+
+%% Shift curve to origin
+displacement = displacement - displacement(1);
+force = force - force(1);
+
+%% Remove small negative values caused by noise
+displacement(displacement < 0) = 0;
+force(force < 0) = 0;
 
                 %% Find shifted peak
                 [peakForceShifted, peakIndex] = max(force);
@@ -560,6 +549,11 @@ function plotCombinedDays( ...
                         csvPath);
                     continue;
                 end
+                %% Keep data only up to the maximum force
+                [~, peakIndex] = max(force);
+
+                displacement = displacement(1:peakIndex);
+                force = force(1:peakIndex);
 
                 %% Plot fracture
               h = plot(displacement, force, ...
@@ -641,6 +635,11 @@ function plotCombinedDays( ...
                         csvPath);
                     continue;
                 end
+                %% Keep data only up to the maximum stress
+                [~, peakIndex] = max(stress);
+
+                strain = strain(1:peakIndex);
+                stress = stress(1:peakIndex);
 
                 %% Plot stress-strain
                 h = plot(strain, stress, ...
@@ -761,6 +760,7 @@ end
 %% ========================================================================
 
 function data = readCSVNumeric(filePath)
+    fprintf('Reading: %s\n', filePath);
 
     opts = detectImportOptions(filePath);
 
@@ -788,17 +788,26 @@ end
 %% Look up specimen dimensions
 %% ========================================================================
 
-function [area, lengthValue, ok] = getDimensions( ...
-    dims, sectionNumber, testName, materialName, sampleNumber)
+function [area,lengthValue,ok] = getDimensions( ...
+    dims,sectionNumber,testName,materialName,sampleNumber)
 
     ok = true;
 
-    row = dims( ...
-        dims.Section == sectionNumber & ...
-        strcmpi(string(dims.Material),string(materialName)) & ...
-        strcmpi(string(dims.Test),string(testName)) & ...
-        dims.Sample == sampleNumber, ...
-        :);
+    %% Convert table columns safely
+    sectionValues = str2double(string(dims.Section));
+    sampleValues  = str2double(string(dims.Sample));
+
+    materialValues = strtrim(string(dims.Material));
+    testValues     = strtrim(string(dims.Test));
+
+    %% Find matching row
+    matchingRows = ...
+        sectionValues == sectionNumber & ...
+        strcmpi(materialValues,string(materialName)) & ...
+        strcmpi(testValues,string(testName)) & ...
+        sampleValues == sampleNumber;
+
+    row = dims(matchingRows,:);
 
     if isempty(row)
 
@@ -815,18 +824,20 @@ function [area, lengthValue, ok] = getDimensions( ...
         return;
     end
 
+    %% Compression specimen
     if strcmpi(testName,'Compression')
 
-        diameter = row.Diameter_mm(1);
-        lengthValue = row.Length_mm(1);
+        diameter = str2double(string(row.Diameter_mm(1)));
+        lengthValue = str2double(string(row.Length_mm(1)));
 
         area = pi * (diameter / 2)^2;
 
+    %% Tension specimen
     elseif strcmpi(testName,'Tension')
 
-        width = row.Width_mm(1);
-        thickness = row.Thickness_mm(1);
-        lengthValue = row.GaugeLength_mm(1);
+        width = str2double(string(row.Width_mm(1)));
+        thickness = str2double(string(row.Thickness_mm(1)));
+        lengthValue = str2double(string(row.GaugeLength_mm(1)));
 
         area = width * thickness;
 
@@ -839,6 +850,7 @@ function [area, lengthValue, ok] = getDimensions( ...
 
     end
 
+    %% Validate dimensions
     if isnan(area) || ...
             isnan(lengthValue) || ...
             area <= 0 || ...
