@@ -468,7 +468,7 @@ forceSmooth = movmean(force, smoothWindow);
 dFdx = gradient(forceSmooth, displacement);
 
 %% Adjustable settings
-slopeThreshold = 100;    % N/mm
+slopeThreshold = 50;    % N/mm
 requiredPoints = 15;    % consecutive points above threshold
 
 %% Require a sustained positive slope
