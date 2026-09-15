@@ -8,6 +8,10 @@ clear; clc; close all;
 %% logic as data_process_and_plot.m, then iterates every
 %% specimen to compute K and G_Ic instead of plotting.
 %%
+%% Each test year corresponds to one AP / epoxy weight ratio,
+%% so results are grouped and plotted against AP content
+%% rather than against the year the data was taken.
+%%
 %% Run this script from inside Junior_Lab_Repo
 %% ==========================================================
 
@@ -18,13 +22,46 @@ days = {'monday','tuesday','wednesday','thursday','friday'};
 materials = {'CNT','NEAT'};
 years = ["2023","2024","2025","2026"];
 
+%% ==========================================================
+%% AP / epoxy composition for each test year (weight percent)
+%%   2023 -> 50% AP / 50% epoxy
+%%   2024 -> 80% AP / 20% epoxy
+%%   2025 -> 60% AP / 40% epoxy
+%%   2026 -> 70% AP / 30% epoxy
+%% Epoxy content is taken as the balance, 100 - AP.
+%% ==========================================================
+
+apPercentByYear = containers.Map( ...
+    {'2023','2024','2025','2026'}, ...
+    {   50,     80,     60,     70});
+
 plotLimits.fracture = 3.5;   % displacement in mm, same crop used for plotting
+
+%% X-axis tick label style for the composition plots:
+%%   "ap"         -> 50%, 60%, 70%, 80%
+%%   "ratio"      -> 50/50, 60/40, 70/30, 80/20   (AP / epoxy)
+%%   "ratio_year" -> 50/50 with the source year underneath
+xTickLabelStyle = "ap";
 
 outputFolder = fullfile(organizedFolder, 'Fracture_GIc_KIc_Results');
 
 if ~isfolder(outputFolder)
     mkdir(outputFolder);
 end
+
+%% Composition lookup, ordered by increasing AP content
+compositions = table();
+
+for y = 1:length(years)
+
+    [apPercent, epoxyPercent] = getComposition(years(y), apPercentByYear);
+
+    compositions = [compositions; table( ...
+        years(y), apPercent, epoxyPercent, ...
+        'VariableNames',{'Year','AP_Percent','Epoxy_Percent'})];
+end
+
+compositions = sortrows(compositions,'AP_Percent');
 
 %% Classify every fracture specimen
 classifiedFracture = classifyAllFractureSpecimens(organizedFolder, days);
@@ -43,6 +80,8 @@ for y = 1:length(years)
 
     yearNumber = years(y);
     yearFolderName = yearNumber + "_organized";
+
+    [apPercent, epoxyPercent] = getComposition(yearNumber, apPercentByYear);
 
     dimensionFile = fullfile( ...
         organizedFolder, ...
@@ -74,7 +113,8 @@ for y = 1:length(years)
             continue;
         end
 
-        fprintf('\nFracture K and G_Ic: %s %s\n', yearNumber, materialName);
+        fprintf('\nFracture K and G_Ic: %g%% AP / %g%% epoxy (%s) %s\n', ...
+            apPercent, epoxyPercent, yearNumber, materialName);
 
         for i = 1:height(selected)
 
@@ -113,6 +153,8 @@ for y = 1:length(years)
                 alpha > 0.2 && alpha < 0.8;
 
             newRow = table( ...
+                apPercent, ...
+                epoxyPercent, ...
                 yearNumber, ...
                 string(materialName), ...
                 string(selected.Batch(i)), ...
@@ -132,6 +174,8 @@ for y = 1:length(years)
                 validGeometry, ...
                 csvPath, ...
                 'VariableNames',{ ...
+                    'AP_Percent', ...
+                    'Epoxy_Percent', ...
                     'Year', ...
                     'Material', ...
                     'Batch', ...
@@ -165,6 +209,10 @@ if isempty(individualResults)
     error('No fracture K / G_Ic results were calculated.');
 end
 
+%% Order every specimen by AP content, then material, then sample
+individualResults = sortrows(individualResults, ...
+    {'AP_Percent','Material','SampleNumber'});
+
 %% Save every specimen's results
 individualFile = fullfile( ...
     outputFolder, 'Fracture_GIc_KIc_All_Specimens.xlsx');
@@ -176,17 +224,21 @@ acceptedResults = individualResults(individualResults.ValidGeometry,:);
 writetable(acceptedResults, individualFile, 'Sheet','Valid Geometry');
 
 %% ==========================================================
-%% Yearly mean and sample standard deviation
+%% Mean and sample standard deviation per composition
 %% ==========================================================
 
-yearlySummary = table();
+compositionSummary = table();
 
-for y = 1:length(years)
+for c = 1:height(compositions)
+
+    yearNumber = compositions.Year(c);
+    apPercent = compositions.AP_Percent(c);
+    epoxyPercent = compositions.Epoxy_Percent(c);
 
     for m = 1:length(materials)
 
         rows = ...
-            strcmpi(acceptedResults.Year, years(y)) & ...
+            strcmpi(acceptedResults.Year, yearNumber) & ...
             strcmpi(acceptedResults.Material, materials(m));
 
         Kvalues = acceptedResults.K_MPa_sqrtm(rows);
@@ -215,7 +267,9 @@ for y = 1:length(years)
         end
 
         newSummaryRow = table( ...
-            years(y), ...
+            apPercent, ...
+            epoxyPercent, ...
+            yearNumber, ...
             string(materials(m)), ...
             meanK, ...
             stdK, ...
@@ -224,6 +278,8 @@ for y = 1:length(years)
             stdGIc, ...
             length(GIcValues), ...
             'VariableNames',{ ...
+                'AP_Percent', ...
+                'Epoxy_Percent', ...
                 'Year', ...
                 'Material', ...
                 'MeanK_MPa_sqrtm', ...
@@ -233,17 +289,57 @@ for y = 1:length(years)
                 'StdGIc_kJ_per_m2', ...
                 'NumberOfGIc_Specimens'});
 
-        yearlySummary = [yearlySummary; newSummaryRow];
+        compositionSummary = [compositionSummary; newSummaryRow];
     end
 end
 
+compositionSummary = sortrows(compositionSummary,{'AP_Percent','Material'});
+
 summaryFile = fullfile( ...
-    outputFolder, 'Fracture_GIc_KIc_Yearly_Summary.xlsx');
+    outputFolder, 'Fracture_GIc_KIc_Composition_Summary.xlsx');
 
-writetable(yearlySummary, summaryFile, 'Sheet','Yearly Summary');
+writetable(compositionSummary, summaryFile, 'Sheet','Composition Summary');
 
-fprintf('\nFinished. Results saved to:\n%s\n%s\n', ...
-    individualFile, summaryFile);
+%% ==========================================================
+%% Trend plots: one point per composition, +/- 1 sample STD
+%% ==========================================================
+
+plotCompositionMetric( ...
+    compositionSummary, compositions, materials, ...
+    'MeanK_MPa_sqrtm', 'StdK_MPa_sqrtm', 'NumberOfK_Specimens', ...
+    'Fracture toughness vs. AP content', ...
+    'K_{Ic} (MPa\cdotm^{0.5})', ...
+    xTickLabelStyle, ...
+    string(fullfile(outputFolder, 'Fracture_KIc_vs_AP_Content')));
+
+plotCompositionMetric( ...
+    compositionSummary, compositions, materials, ...
+    'MeanGIc_kJ_per_m2', 'StdGIc_kJ_per_m2', 'NumberOfGIc_Specimens', ...
+    'Critical strain energy release rate vs. AP content', ...
+    'G_{Ic} (kJ/m^2)', ...
+    xTickLabelStyle, ...
+    string(fullfile(outputFolder, 'Fracture_GIc_vs_AP_Content')));
+
+fprintf('\nFinished. Results saved to:\n%s\n%s\n%s\n', ...
+    individualFile, summaryFile, outputFolder);
+
+%% ========================================================================
+%% AP / epoxy weight percent for one test year
+%% ========================================================================
+
+function [apPercent, epoxyPercent] = getComposition(yearValue, apPercentByYear)
+
+    key = char(string(yearValue));
+
+    if isKey(apPercentByYear, key)
+        apPercent = apPercentByYear(key);
+    else
+        warning('No AP composition defined for year %s.', key);
+        apPercent = NaN;
+    end
+
+    epoxyPercent = 100 - apPercent;
+end
 
 %% ========================================================================
 %% Classify all fracture specimens (mirrors classifyAllSpecimens in
@@ -691,4 +787,151 @@ function [GIc_kJ_per_m2, energy_J] = calculateEnergyReleaseRate( ...
 
     GIc_J_per_m2 = energy_J / ligamentArea_m2;
     GIc_kJ_per_m2 = GIc_J_per_m2 / 1000;
+end
+
+%% ========================================================================
+%% Plot one metric against AP content for every material
+%%
+%% One point per composition per material, +/- 1 sample STD whiskers,
+%% legend with the total specimen count for each series. Compositions
+%% with only one valid specimen have a NaN STD and therefore show a
+%% marker with no whiskers.
+%% ========================================================================
+
+function plotCompositionMetric( ...
+    summaryTable, compositions, materials, ...
+    meanField, stdField, countField, ...
+    titleText, yLabelText, tickLabelStyle, savePathBase)
+
+    colors  = [0.00 0.45 0.74;    % CNT
+               0.85 0.33 0.10];   % NEAT
+    markers = {'o','s'};
+
+    %% Force ascending AP order so the x-axis and the connecting line
+    %% both run from the lowest to the highest AP loading, whatever
+    %% order the compositions were defined in.
+    compositions = sortrows(compositions,'AP_Percent','ascend');
+
+    xValues = compositions.AP_Percent;
+    numPoints = numel(xValues);
+    numMaterials = numel(materials);
+
+    %% Scale the marker offset to the tightest gap between compositions
+    if numPoints > 1
+        spacing = min(diff(sort(xValues)));
+    else
+        spacing = 10;
+    end
+
+    if numMaterials == 1
+        offsets = 0;
+    else
+        offsets = linspace(-0.08, 0.08, numMaterials) * spacing;
+    end
+
+    figure('Color','w','Units','inches','Position',[1 1 6.5 4.5]);
+    hold on; grid on; box on;
+
+    plotHandles = gobjects(0);
+    legendLabels = strings(0);
+
+    summaryYears = string(summaryTable.Year);
+    summaryMaterials = string(summaryTable.Material);
+
+    for m = 1:numMaterials
+
+        materialName = string(materials{m});
+
+        meanValues = NaN(numPoints,1);
+        stdValues  = NaN(numPoints,1);
+        counts     = zeros(numPoints,1);
+
+        for p = 1:numPoints
+
+            rows = strcmpi(summaryYears, compositions.Year(p)) & ...
+                   strcmpi(summaryMaterials, materialName);
+
+            index = find(rows, 1, 'first');
+
+            if isempty(index)
+                continue;
+            end
+
+            meanValues(p) = summaryTable.(meanField)(index);
+            stdValues(p)  = summaryTable.(stdField)(index);
+            counts(p)     = summaryTable.(countField)(index);
+        end
+
+        if all(isnan(meanValues))
+            continue;
+        end
+
+        h = errorbar( ...
+            xValues + offsets(m), ...
+            meanValues, ...
+            stdValues, ...
+            'LineStyle','-', ...
+            'LineWidth',1.5, ...
+            'Marker',markers{min(m,numel(markers))}, ...
+            'MarkerSize',7, ...
+            'MarkerFaceColor',colors(min(m,size(colors,1)),:), ...
+            'Color',colors(min(m,size(colors,1)),:), ...
+            'CapSize',8);
+
+        plotHandles(end+1) = h; %#ok<AGROW>
+
+        legendLabels(end+1) = sprintf( ...
+            '%s (n = %d)', materialName, sum(counts)); %#ok<AGROW>
+    end
+
+    if isempty(plotHandles)
+        warning('No data available to plot for %s.', meanField);
+        close(gcf);
+        return;
+    end
+
+    xlabel('AP content (wt%)','FontSize',12);
+    ylabel(yLabelText,'FontSize',12);
+    title(titleText,'FontSize',13,'FontWeight','bold');
+
+    %% One tick per composition, labelled by AP content
+    tickLabels = cell(numPoints,1);
+
+    for p = 1:numPoints
+
+        switch lower(string(tickLabelStyle))
+
+            case "ratio"
+                tickLabels{p} = sprintf('%g/%g', ...
+                    compositions.AP_Percent(p), ...
+                    compositions.Epoxy_Percent(p));
+
+            case "ratio_year"
+                tickLabels{p} = sprintf('%g/%g\n(%s)', ...
+                    compositions.AP_Percent(p), ...
+                    compositions.Epoxy_Percent(p), ...
+                    compositions.Year(p));
+
+            otherwise   % "ap"
+                tickLabels{p} = sprintf('%g%%', ...
+                    compositions.AP_Percent(p));
+        end
+    end
+
+    %% xValues is already ascending, so the endpoints bound the axis
+    xticks(xValues);
+    xticklabels(tickLabels);
+    xlim([xValues(1) - 0.5*spacing, xValues(end) + 0.5*spacing]);
+
+    legend(plotHandles, legendLabels, ...
+        'Location','best', ...
+        'FontSize',11, ...
+        'Box','on');
+
+    set(gca,'FontSize',11,'LineWidth',1.0,'GridAlpha',0.15);
+
+    hold off;
+
+    exportgraphics(gcf, savePathBase + ".png", 'Resolution', 300);
+    exportgraphics(gcf, savePathBase + ".pdf", 'ContentType','vector');
 end
