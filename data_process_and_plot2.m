@@ -1,5 +1,5 @@
 clear; clc; close all;
-set(0,'DefaultFigureVisible','on');
+set(0,'DefaultFigureVisible','on'); 
 
 %% ==========================================================
 %% Run this script from inside Junior_Lab_Repo
