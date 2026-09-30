@@ -25,7 +25,7 @@ years = ["2023","2024","2025","2026"];
 %% ==========================================================
 %% AP / epoxy composition for each test year (weight percent)
 %%   2023 -> 50% AP / 50% epoxy
-%%   2024 -> 80% AP / 20% epoxy
+%%   2024 -> 40% AP / 60% epoxy
 %%   2025 -> 60% AP / 40% epoxy
 %%   2026 -> 70% AP / 30% epoxy
 %% Epoxy content is taken as the balance, 100 - AP.
@@ -33,13 +33,13 @@ years = ["2023","2024","2025","2026"];
 
 apPercentByYear = containers.Map( ...
     {'2023','2024','2025','2026'}, ...
-    {   50,     80,     60,     70});
+    {   50,     40,     60,     70});
 
 plotLimits.fracture = 3.5;   % displacement in mm, same crop used for plotting
 
 %% X-axis tick label style for the composition plots:
-%%   "ap"         -> 50%, 60%, 70%, 80%
-%%   "ratio"      -> 50/50, 60/40, 70/30, 80/20   (AP / epoxy)
+%%   "ap"         -> 40%, 50%, 60%, 70%
+%%   "ratio"      -> 40/60, 50/50, 60/40, 70/30   (AP / epoxy)
 %%   "ratio_year" -> 50/50 with the source year underneath
 xTickLabelStyle = "ap";
 
