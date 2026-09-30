@@ -1301,7 +1301,10 @@ function plotYearlyAverageCurves( ...
                 end
 
                 %% Fracture point of each contributing specimen (Tension and
-                %% Fracture only), taken as each specimen's maximum y value.
+                %% Fracture only). Fracture is taken as the maximum y value of
+                %% the specimen, and (fractureX, fractureY) is that peak location.
+                %% The mean and standard deviation of these points drive the
+                %% marker, drop line, and spread band below.
                 fractureXValues = [];
                 fractureYValues = [];
 
@@ -1401,13 +1404,13 @@ function plotYearlyAverageCurves( ...
                 plotHandles(end+1) = h;
 
                 plottedYears(end+1) = ...
-                    apEpoxyLabel(yearNumber) + ...          % <<< CHANGED
+                    yearNumber + ...
                     " mean \pm SD (n = " + ...
                     string(size(interpolatedY,2)) + ")";
 
                 %% ============================================================
-                %% Fracture points + mean drop line + spread band
-                %% (Tension and Fracture only)
+                %% Fracture points (max y of each specimen) + mean drop line
+                %% + horizontal spread band (Tension and Fracture only)
                 %% ============================================================
                 if addLineForThisTest
 
@@ -1434,7 +1437,8 @@ function plotYearlyAverageCurves( ...
                             yearNumber, materialName, testName, ...
                             numel(fractureX), meanFractureX, stdFractureX);
 
-                        %% Horizontal spread band: mean fracture x +/- 1 SD
+                        %% Horizontal spread band: mean fracture x +/- 1 SD,
+                        %% from y = 0 up to the mean fracture y value
                         if stdFractureX > 0
 
                             xLeft = meanFractureX - stdFractureX;
@@ -1460,7 +1464,7 @@ function plotYearlyAverageCurves( ...
                             'LineStyle','--', ...
                             'HandleVisibility','off');
 
-                        %% Individual fracture points
+                        %% Individual fracture points (each specimen's max y)
                         scatter( ...
                             ax, ...
                             fractureX, ...
@@ -1484,7 +1488,7 @@ function plotYearlyAverageCurves( ...
             %% Tick labels: bold, size 18
             set(ax,'FontSize',18,'FontWeight','bold');
 
-            %% Axis labels: bold, size 20
+            %% Axis labels: bold, size 20 (re-applied so they stay 20)
             if strcmpi(testName,'Fracture')
 
                 xlabel(ax,'Displacement (mm)', ...
@@ -1911,7 +1915,12 @@ function plotYearTestStandardDeviationCurves( ...
                     ylabel(ax,'Stress (MPa)');
                 end
 
-                title(ax, apEpoxyLabel(yearNumber));
+                title( ...
+                    ax, ...
+                    yearNumber + " " + ...
+                    materialName + " " + ...
+                    testName + ...
+                    " — Mean \pm Standard Deviation");
 
                 if isempty(shadeHandle)
 
@@ -1949,8 +1958,7 @@ function plotYearTestStandardDeviationCurves( ...
                             minimumContributors));
                 end
 
-                %% Save graph (file name still uses the year so files
-                %% stay sortable and don't contain "%" or "/")
+                %% Save graph
                 saveName = ...
                     yearNumber + "_" + ...
                     materialName + "_" + ...
@@ -1975,7 +1983,6 @@ function plotYearTestStandardDeviationCurves( ...
         end
     end
 end
-
 %% ========================================================================
 %% Calculate Young's modulus for all tension and compression specimens
 %% ========================================================================
@@ -2330,18 +2337,11 @@ end
 %% Plot Young's modulus values by year
 %% ========================================================================
 
-
 function plotYoungsModulusResults( ...
     individualResults, yearlySummary, ...
     years, materials, tests, outputFolder)
 
     xPositions = 1:length(years);
-
-    %% AP/Epoxy tick labels, one per year                  % <<< CHANGED
-    ratioLabels = strings(1,length(years));
-    for k = 1:length(years)
-        ratioLabels(k) = apEpoxyLabel(years(k));
-    end
 
     for m = 1:length(materials)
 
@@ -2470,11 +2470,11 @@ function plotYoungsModulusResults( ...
             end
 
             xticks(ax,xPositions);
-            xticklabels(ax,cellstr(ratioLabels));          % <<< CHANGED
+            xticklabels(ax,cellstr(years));
 
             xlim(ax,[0.5,length(years) + 0.5]);
 
-            xlabel(ax,'AP / Epoxy Ratio');                 % <<< CHANGED
+            xlabel(ax,'Year');
             ylabel(ax,'Young''s Modulus (MPa)');
 
             title( ...
@@ -2495,10 +2495,6 @@ function plotYoungsModulusResults( ...
         end
     end
 end
-
-
-
-
 %% ========================================================================
 %% Process one specimen for the yearly average
 %% ========================================================================

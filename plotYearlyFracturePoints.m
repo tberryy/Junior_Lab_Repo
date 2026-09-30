@@ -607,6 +607,7 @@ end
                     'Color', thisColor, ...
                     'LineWidth', 3.0);
 
+                legendHandles(end+1) = fitHandle;                        %#ok<AGROW>
                 legendLabels(end+1) = materialName + ...
                 string(sprintf(' linearized mean (n = %d)', numberKept));                   %#ok<AGROW>
 
@@ -785,10 +786,7 @@ if linearAnythingPlotted
             'FontSize',20);
     end
 
-    title(linearAx, ...
-        yearNumber + " " + testName + ...
-        " Linearized Mean", ...
-        'Interpreter','none');
+    title(linearAx, apEpoxyLabel(yearNumber), 'Interpreter','none');
 
     legend( ...
         linearAx, ...
@@ -847,7 +845,7 @@ end
             ylabel(ax,'Stress (MPa)','FontWeight','bold','FontSize',20);
         end
 
-        title(ax, yearNumber + " " + testName, 'Interpreter','none');
+        title(ax, apEpoxyLabel(yearNumber), 'Interpreter','none');
 
         %% subtitleText must be a STRING, not a char array. Adding two
         %% char arrays with + performs numeric addition of character
@@ -1254,4 +1252,24 @@ function txt = showCSV(~,event)
     fprintf('=================================================\n\n');
 
     txt = {'CSV File' char(csvPath)};
+end
+
+%% ------------------------------------------------------------------------
+%% Convert a year (e.g. "2024" or "2024_organized") to its AP/Epoxy label
+%% ------------------------------------------------------------------------
+function label = apEpoxyLabel(yearValue)
+
+    yearKey = erase(string(yearValue), "_organized");
+
+    years = ["2023","2024","2025","2026"];
+    ap    = [50     40     60     70];
+    epoxy = [50     60     40     30];
+
+    idx = find(years == yearKey, 1);
+
+    if isempty(idx)
+        label = yearKey;   % fall back to the year if it's not in the table
+    else
+        label = sprintf("%d%% AP / %d%% Epoxy", ap(idx), epoxy(idx));
+    end
 end
