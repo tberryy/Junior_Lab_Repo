@@ -24,16 +24,16 @@ years = ["2023","2024","2025","2026"];
 
 %% ==========================================================
 %% AP / epoxy composition for each test year (weight percent)
-%%   2023 -> 50% AP / 50% epoxy
+%%   2023 -> 60% AP / 40% epoxy
 %%   2024 -> 40% AP / 60% epoxy
-%%   2025 -> 60% AP / 40% epoxy
+%%   2025 -> 50% AP / 50% epoxy
 %%   2026 -> 70% AP / 30% epoxy
 %% Epoxy content is taken as the balance, 100 - AP.
 %% ==========================================================
 
 apPercentByYear = containers.Map( ...
     {'2023','2024','2025','2026'}, ...
-    {   50,     40,     60,     70});
+    {   60,     40,     50,     70});
 
 plotLimits.fracture = 3.5;   % displacement in mm, same crop used for plotting
 
@@ -43,7 +43,7 @@ plotLimits.fracture = 3.5;   % displacement in mm, same crop used for plotting
 %%   "ratio_year" -> 50/50 with the source year underneath
 xTickLabelStyle = "ap";
 
-outputFolder = fullfile(organizedFolder, 'Fracture_GIc_KIc_Results');
+outputFolder = fullfile(repoFolder, 'Fracture_GIc_KIc_Export');
 
 if ~isfolder(outputFolder)
     mkdir(outputFolder);
@@ -93,11 +93,23 @@ for y = 1:length(years)
         continue;
     end
 
-    dims = readtable(dimensionFile);
+    %% Each batch has its own sheet, and section numbers repeat across
+    %% batches, so keep every sheet and pick the one matching the batch
+    sheetNames = sheetnames(dimensionFile);
+    dimsBySheet = struct();
 
-    if ~ismember('Material', dims.Properties.VariableNames)
-        dims.Properties.VariableNames{2} = 'Material';
+    for s = 1:numel(sheetNames)
+
+        sheetDims = readtable(dimensionFile, 'Sheet', sheetNames(s));
+
+        if ~ismember('Material', sheetDims.Properties.VariableNames)
+            sheetDims.Properties.VariableNames{2} = 'Material';
+        end
+
+        dimsBySheet.(char(matlab.lang.makeValidName(sheetNames(s)))) = sheetDims;
     end
+
+    sheetFields = fieldnames(dimsBySheet);
 
     for m = 1:length(materials)
 
@@ -125,6 +137,16 @@ for y = 1:length(years)
             sectionNumber = str2double(regexprep(groupName,'\D',''));
             sampleNumber = str2double(regexprep(sampleName,'\D',''));
 
+            batchField = char(matlab.lang.makeValidName(string(selected.Batch(i))));
+
+            if isfield(dimsBySheet, batchField)
+                dims = dimsBySheet.(batchField);
+            else
+                warning('No dimension sheet named %s; using %s.', ...
+                    batchField, sheetFields{1});
+                dims = dimsBySheet.(sheetFields{1});
+            end
+
             [width_mm, thickness_mm, crackLength_mm, ok] = ...
                 getFractureDimensions( ...
                     dims, sectionNumber, materialName, sampleNumber);
@@ -147,10 +169,15 @@ for y = 1:length(years)
                 displacement, force, width_mm, thickness_mm, crackLength_mm);
 
             %% a/W should fall inside 0.2-0.8 for the CT geometry
-            %% factor below to be valid (ASTM E399 / D5045)
+            %% factor below to be valid (ASTM E399 / D5045), and
+            %% ASTM D5045 requires 2 <= W/B <= 4. The W/B check also
+            %% catches dimension rows with swapped or shifted columns.
+            widthToThickness = width_mm / thickness_mm;
+
             validGeometry = ...
                 isfinite(K) && isfinite(GIc) && ...
-                alpha > 0.2 && alpha < 0.8;
+                alpha > 0.2 && alpha < 0.8 && ...
+                widthToThickness >= 2 && widthToThickness <= 4;
 
             newRow = table( ...
                 apPercent, ...
@@ -400,6 +427,16 @@ function classifiedAll = classifyAllFractureSpecimens(organizedFolder, days)
                     fractureFiles = allCSVFiles( ...
                         contains(fileNamesUpper, "FRACTURE"));
 
+                    %% Skip Bluehill results tables (*_N_1.csv). They have
+                    %% no force column, so their NaN peak force would sort
+                    %% first and take the CNT_1..CNT_4 slots.
+                    isCurve = false(size(fractureFiles));
+                    for k = 1:numel(fractureFiles)
+                        isCurve(k) = isCurveFile(fullfile( ...
+                            fractureFiles(k).folder, fractureFiles(k).name));
+                    end
+                    fractureFiles = fractureFiles(isCurve);
+
                     if isempty(fractureFiles)
                         continue;
                     end
@@ -500,6 +537,19 @@ function results = classifyFractureFileList( ...
     results = results(:,{ ...
         'Year','Batch','Day','Group','Test','SampleName', ...
         'Material','OriginalFileName','FilePath','MaxForce'});
+end
+
+%% ========================================================================
+%% True when a CSV holds Time / Displacement / Force data
+%% ========================================================================
+
+function tf = isCurveFile(filePath)
+
+    fid = fopen(filePath, 'r');
+    head = fread(fid, 300, '*char')';
+    fclose(fid);
+
+    tf = ~isempty(regexp(head, '(^|\n)\s*Time', 'once'));
 end
 
 %% ========================================================================

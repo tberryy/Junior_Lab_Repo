@@ -96,7 +96,7 @@ function plotYearlyFracturePoints( ...
     testName    = string(testName);
 
     %% Composition percentages
-    apPercentages = [50, 40, 60, 70];
+    apPercentages = [60, 40, 50, 70];
     epoxyPercentages = 100 - apPercentages;
 
 
